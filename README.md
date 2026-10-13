@@ -4,6 +4,8 @@
 
 Codex 的登录状态、配置和 session 仍由 Codex 自己管理；Web UI 不读取或保存 Codex 凭据。
 
+![Codex WebUI 操作演示](https://hipldz.com/api/v1/website/image/ai-sharing/codex-webui-lite-demo.gif@original)
+
 ## 功能
 
 - 从 app-server 分页加载本机 Codex CLI、VS Code、exec、app-server 和 sub-agent sessions
@@ -464,6 +466,40 @@ unset CODEX_WEB_AUTH
 Basic Auth 只是访问门槛，凭据本身仅做 Base64 编码。通过非本机网络访问时必须使用 Nginx HTTPS，不能直接把 HTTP 服务暴露到公网。
 
 ## Nginx
+
+### 纯静态 mock（无需 Node 后端）
+
+如果只想预览 WebUI，可以把已有前端产物导出为独立 mock：
+
+```bash
+npm run mock:export
+```
+
+导出器只读取已有的 `dist/`，生成 `dist-mock/`，不运行构建、不启动服务，也不修改真实页面。若尚无 `dist/`，需先在构建机器上生成前端产物；重新导出会清空并替换 `dist-mock/`。源码更新后，也需先更新 `dist/` 再导出。
+
+将整个 `dist-mock/` 交给 Nginx 托管即可。参考 [`deploy/nginx-mock.conf`](deploy/nginx-mock.conf)，把其中 `root` 改为部署目录，然后将配置放入 Nginx 已包含的配置目录并重新加载 Nginx。该示例监听 `8080`：
+
+- `/`：自动进入聊天 mock，可模拟发送和流式回复。
+- `/?demo=questions`：多问题、选项与自定义回答。
+- `/?demo=plan`：计划确认与修改。
+
+顶部会标明 **Static mock · 无后端** 并提供三个场景链接。界面复用现有 React 产物；不需要 CDN、Node 服务、Codex 登录或 API 反向代理。会话操作、文件预览、审批和模型选择均使用现有演示逻辑，数据在刷新后重置；文件下载、真实文件持久化和运行时管理需要真实后端，不属于这个 mock。
+
+支持静态子路径部署，资源均使用相对路径。例如将 `dist-mock/` 复制到 `/srv/www/codex-mock/`，在已有 `root /srv/www;` 的 Nginx server 内加入：
+
+```nginx
+location = /codex-mock {
+    return 301 /codex-mock/$is_args$args;
+}
+location /codex-mock/ {
+    try_files $uri $uri/ =404;
+    add_header Cache-Control "no-cache";
+}
+```
+
+访问 `/codex-mock/` 即可，记得保留目录末尾的 `/`。纯静态版只能演示交互；连接真实 Codex 请使用下方的后端反向代理配置。
+
+### 真实 Codex 后端
 
 Nginx 可以负责 TLS 和反向代理，但不能替代 Node。Node 仍需要：
 

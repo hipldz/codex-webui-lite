@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-server/
+dist-mock/
 artifacts/
 .run/
 package-lock.json

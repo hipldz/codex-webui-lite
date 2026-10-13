@@ -10,6 +10,7 @@
     "test": "tsx --test tests/*.test.ts",
     "dev": "tsx server/index.ts --dev",
     "build": "tsc --noEmit && vite build && node scripts/compress.mjs && tsc -p tsconfig.server.json",
+    "mock:export": "node scripts/export-mock.mjs",
     "start": "node --max-old-space-size=256 dist-server/index.js",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
