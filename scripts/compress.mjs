@@ -6,7 +6,17 @@ import path from "node:path";
 const brotli = promisify(brotliCompress);
 const gzipAsync = promisify(gzip);
 const dist = path.resolve("dist");
-const compressible = new Set([".html", ".css", ".js", ".svg", ".json", ".txt", ".xml", ".webmanifest", ".wasm"]);
+const compressible = new Set([
+  ".html",
+  ".css",
+  ".js",
+  ".svg",
+  ".json",
+  ".txt",
+  ".xml",
+  ".webmanifest",
+  ".wasm",
+]);
 let sources = 0;
 let outputs = 0;
 let saved = 0;
@@ -14,7 +24,10 @@ let saved = 0;
 async function visit(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const file = path.join(directory, entry.name);
-    if (entry.isDirectory()) { await visit(file); continue; }
+    if (entry.isDirectory()) {
+      await visit(file);
+      continue;
+    }
     if (!entry.isFile() || !compressible.has(path.extname(entry.name).toLowerCase())) continue;
     const original = await readFile(file);
     if (original.length < 512) continue;
@@ -34,4 +47,6 @@ async function visit(directory) {
 
 if (!(await stat(dist)).isDirectory()) throw new Error(`Build output not found: ${dist}`);
 await visit(dist);
-console.log(`Compressed ${outputs} assets from ${sources} source files; saved ${saved} bytes across Brotli and gzip variants.`);
+console.log(
+  `Compressed ${outputs} assets from ${sources} source files; saved ${saved} bytes across Brotli and gzip variants.`,
+);

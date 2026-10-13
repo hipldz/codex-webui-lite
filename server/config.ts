@@ -1,4 +1,7 @@
 import os from "node:os";
+import path from "node:path";
+
+export const codexHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"));
 
 const defaultWorkspace = process.env.CODEX_WEB_DEFAULT_WORKSPACE;
 
@@ -15,7 +18,8 @@ export function normalizeBasePath(value = "/") {
 function basicAuth(value = process.env.CODEX_WEB_AUTH) {
   if (!value) return null;
   const separator = value.indexOf(":");
-  if (separator < 1 || separator === value.length - 1) throw new Error("CODEX_WEB_AUTH must use the format username:password");
+  if (separator < 1 || separator === value.length - 1)
+    throw new Error("CODEX_WEB_AUTH must use the format username:password");
   return { username: value.slice(0, separator), password: value.slice(separator + 1) };
 }
 

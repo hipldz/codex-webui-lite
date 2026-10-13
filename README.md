@@ -9,18 +9,32 @@ Codex 的登录状态、配置和 session 仍由 Codex 自己管理；Web UI 不
 - 从 app-server 分页加载本机 Codex CLI、VS Code、exec、app-server 和 sub-agent sessions
 - 创建、恢复、Branch、归档、取消归档、批量操作和删除 session
 - 当前 session 写入 `?session=<id>`，刷新页面后自动恢复
-- 创建新对话前从当前用户 home 中选择 workspace；已有 session 自动恢复自己的 workspace
+- 新对话默认使用 `CODEX_WEB_DEFAULT_WORKSPACE`；未配置或目录无效时手动选择 workspace；已有 session 自动恢复自己的 workspace
 - 从真实 `model/list` 读取模型与 reasoning effort
 - 流式显示回答、thinking、命令、文件修改、工具调用、网页搜索、图片、hook、子 agent、review、计划更新与警告
 - AI 回复在浏览器端渲染 Markdown/GFM，支持表格、任务列表、删除线与代码块
 - 每轮活动汇总为可展开的时间线；保留文件/命令摘要和历史 context compact 记录
+- 执行中原生提问：选项、自定义回答、多问题导航、快捷提交、待回答提示、草稿恢复与提交回执；同时支持阻塞问题和非阻塞问题
+- Code / Plan 模式切换；原生计划以独立卡片展示，完成后可确认执行或继续修改
 - Composer 可选择会话权限：按需确认、Full access（无 sandbox / 无审批）或只读；设置会作用于后续 turn
 - 可在输入框粘贴或选择任意类型文件作为附件；图片支持点击预览，所有附件均会在会话中保留并可下载
-- 输入框附件单条消息最多 4 个，单个文件和所有附件合计均限制为 10 MB；附件直接保存在当前 thread 的 workspace `.files/<thread.id>/`，每轮会把具体文件路径告诉 Codex；文本、图片和音频也会直接传入模型，其他二进制文件可由 Codex 按路径读取
-- 文件树、文本文件创建/删除、预览、编辑与下载；支持向 workspace 目录上传文件
+- 输入框附件单条消息最多 4 个，单个文件和所有附件合计均限制为 10 MB；附件直接保存在 `${CODEX_HOME}/web-ui/<thread.id>/`（默认 `~/.codex/web-ui/<thread.id>/`），每轮会把具体文件路径告诉 Codex；文本、图片和音频也会直接传入模型，其他二进制文件可由 Codex 按路径读取
+- 文件树、文本文件创建/删除、预览、编辑与下载；Project files 与 Session files 分开浏览和上传
 - 按文件查看 Changes/Diff
 - 显示 context window、实时内存占用，以及独立的 5-hour / Weekly account usage 窗口
 - 支持部署在 `/codex/` 之类的反向代理子路径；不要求 WebSocket 反代
+
+## 提问与计划交互
+
+输入框工具栏的 **Code / Plan** 切换决定下一轮是直接执行还是先规划。Plan 使用 Codex 内置的规划模式；收到原生计划后显示 Markdown 计划卡片。只有规划轮成功完成，才出现 **Implement this plan** 和 **Revise plan**。执行会切换到 Code 并开始新一轮；修改会将输入框切回 Plan，供用户补充要求。
+
+Codex 的 `item/tool/requestUserInput` 会显示问题卡片。可以选择选项，或在协议允许时填写自己的答案；多问题支持逐项导航，所有问题回答后统一提交。支持 `Ctrl / ⌘ + Enter`。阻塞问题提交后当前任务继续；非阻塞问题可暂不回答或主动 dismiss。异步消息中的结构化问题也会显示卡片：任务运行时通过 `turn/steer` 回答，任务结束后通过新一轮发送答案。
+
+普通答案草稿保存在当前浏览器标签页，敏感答案使用密码输入框且不保存草稿。服务进程存活时，刷新或重新打开会话可恢复待回答问题和近期回执；请求被 Codex 关闭、任务中断或 runtime 重启后，会显示为已关闭，避免向失效请求提交。回执使用有容量限制的内存缓存，不作为永久历史存储；从原生历史恢复但无法确定是否仍有效的问题仅供查看。
+
+演示页面可使用 `?demo=questions` 查看多问题交互，或使用 `?demo=plan` 查看计划确认。演示无需运行模型，回答与执行仅在浏览器中模拟。
+
+这些原生接口属于 Codex experimental API。本次按本机 `codex-cli 0.162.1` 导出的协议实现；较旧的 app-server 若不支持 `collaborationMode`，发送会明确报错，不会静默把规划请求改成执行请求。
 
 ## 目录说明
 
@@ -72,6 +86,22 @@ http://127.0.0.1:8765/
 ```
 
 前端修改由 Vite 即时加载，后端入口通过 `tsx server/index.ts --dev` 运行。
+
+## 代码格式化
+
+项目使用 Prettier，配置在 `.prettierrc.json`。格式化源码与文档：
+
+```bash
+npm run format
+```
+
+仅检查格式，不修改文件：
+
+```bash
+npm run format:check
+```
+
+生成目录、依赖目录、运行文件和 npm 管理的 `package-lock.json` 通过 `.prettierignore` 排除。
 
 ## 会话权限
 
@@ -256,19 +286,25 @@ PowerShell：
 powershell -ExecutionPolicy Bypass -File .\scripts\codex-web.ps1 start
 ```
 
-脚本继承当前终端中的 `CODEX_WEB_*` 和 `CODEX_HOME` 环境变量。例如：
+脚本继承执行 `start` / `restart` 的当前终端中的 `CODEX_WEB_*` 和 `CODEX_HOME` 环境变量，不保存这些变量，也不自动加载 `.env` 文件。例如：
 
 ```bash
 export CODEX_WEB_BASE_PATH=/codex
 export CODEX_WEB_PORT=8765
+mkdir -p "$HOME/workspace"
+export CODEX_WEB_DEFAULT_WORKSPACE="$HOME/workspace"
 ./scripts/codex-web.sh start
 ```
 
 ```powershell
 $env:CODEX_WEB_BASE_PATH = "/codex"
 $env:CODEX_WEB_PORT = "8765"
+New-Item -ItemType Directory -Force -Path "$HOME/workspace" | Out-Null
+$env:CODEX_WEB_DEFAULT_WORKSPACE = "$HOME/workspace"
 .\scripts\codex-web.ps1 start
 ```
+
+在另一个终端执行 `restart` 时，需先重新设置所需变量；已经运行时再次执行 `start` 不会更新配置。需要持久配置时，使用下方 systemd 的 `EnvironmentFile`。
 
 运行日志和 PID 保存在 `.run/`，该目录不会提交到 Git。`logs` 命令中的 `Ctrl+C` 只会退出日志查看，不会停止服务。
 
@@ -345,20 +381,41 @@ systemd 和 `scripts/codex-web.sh` 不要同时管理同一个实例。
 
 所有变量都是可选的：
 
-| 变量                          | 默认值      | 说明                                                                                                                  |
-| ----------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------- |
-| `CODEX_WEB_HOST`              | `127.0.0.1` | Node 监听地址                                                                                                         |
-| `CODEX_WEB_PORT`              | `8765`      | Node 监听端口                                                                                                         |
-| `CODEX_WEB_BASE_PATH`         | `/`         | 页面及 HTTP API 的统一子路径                                                                                          |
-| `CODEX_WEB_DEFAULT_WORKSPACE` | 未设置      | 启动时默认选中的 workspace 目录；目录不存在或不可用时忽略，仍需手动选择                                               |
-| `CODEX_WEB_AUTH`              | 未启用      | 可选 Basic Auth，格式为 `username:password`                                                                           |
-| `CODEX_HOME`                  | `~/.codex`  | Codex sessions、旧版 Web UI 附件缓存和 Codex 原始生成图片所在目录；新版输入框附件保存在 thread workspace 的 `.files/` |
+| 变量                          | 默认值      | 说明                                                                                                    |
+| ----------------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
+| `CODEX_WEB_HOST`              | `127.0.0.1` | Node 监听地址                                                                                           |
+| `CODEX_WEB_PORT`              | `8765`      | Node 监听端口                                                                                           |
+| `CODEX_WEB_BASE_PATH`         | `/`         | 页面及 HTTP API 的统一子路径                                                                            |
+| `CODEX_WEB_DEFAULT_WORKSPACE` | 未设置      | 启动及每次新建对话时默认选中的 workspace 目录；目录不存在或不可用时忽略，仍需手动选择                   |
+| `CODEX_WEB_AUTH`              | 未启用      | 可选 Basic Auth，格式为 `username:password`                                                             |
+| `CODEX_HOME`                  | `~/.codex`  | Codex 配置与 sessions 所在目录；Web UI 规则写入其中的 `AGENTS.md`，会话文件保存在 `web-ui/<thread.id>/` |
 
-页面会先加载最近 50 个本地 session；打开已有 session 时使用该 session 自己的 workspace。设置 `CODEX_WEB_DEFAULT_WORKSPACE` 后，新对话默认使用指定目录；未设置或目录无效时，从当前用户 home 中手动选择 workspace。
+页面会先加载最近 50 个本地 session。workspace 的选择规则如下：
 
-Composer 上传文件使用 app-server 返回的 `thread.id`（不是 `sessionId`）作为目录名，例如 `.files/<thread.id>/<message-id>-0-example.pdf`。恢复和分叉 session 后也按各自 thread 的 ID 和 cwd 定位；旧版 `.files/<thread.id>/uploads/` 和 `CODEX_HOME/attachments/codex-web/` 附件仍可读取。删除 thread 不会自动删除 workspace 下的 `.files/<thread.id>/`，以免误删其中的图片或其他工作文件。
+- 打开已有 session 或刷新带 `?session=<id>` 的地址时，恢复该 session 自己的 workspace。
+- 每次点击 **New thread** 时，恢复 `CODEX_WEB_DEFAULT_WORKSPACE` 指定的目录，并重新读取该目录的模型、reasoning effort 与权限默认配置。
+- 未设置默认目录，或启动时发现目录不存在、不是目录或无法访问时，新建对话需手动选择 workspace；不会将 Web UI 项目目录或上一个 session 的目录自动当成已选 workspace。
+- 新对话首次发送前可以手动选择其他目录，本次对话使用该目录；再次点击 **New thread** 时仍恢复配置的默认目录。仅浏览或取消目录选择器不会改变当前 workspace。
 
-Web UI 不会创建或修改 workspace 的 `AGENTS.md`。可按需将 [AGENTS.md.template](AGENTS.md.template) 的内容手动加入 `~/.codex/AGENTS.md`。每轮输入都会向 Codex 传入具体的 `.files/<thread.id>/` 路径，但这段内部说明不会显示在用户消息气泡里。上传文件与 Codex 生成的独立交付文件（图片、文档、音频、导出文件等）都直接放在该目录，不再按类型分子目录；上传文件名前缀用于避免重名。用户明确指定其他交付路径时以用户要求为准；源码修改、项目文件和必须位于原路径的构建产物仍留在项目目录。Codex 的 `cwd` 仍是项目 workspace，不会切到 `.files/`。生成文件的归档由 Agent 执行，不是后端自动搬运，因此受当前权限和执行结果影响。首次保存附件时，如果 workspace 根目录已有 `.gitignore`，Web UI 会追加 `.files/` 忽略规则；不会为此新建 `.gitignore`，已存在相同规则时也不会重复追加。
+`CODEX_WEB_DEFAULT_WORKSPACE` 应指向已存在且服务运行用户可访问的目录，推荐使用绝对路径。默认目录在 Web 服务启动时读取和校验；修改环境变量或修复无效目录后需重启 Web 服务，再重新载入页面。仅修改环境变量不需要重新构建；更新 `src/` 或 `server/` 源码时，生产模式必须先重新构建再重启。
+
+各类目录的用途分别是：
+
+| 目录                      | 用途                                            | 配置方式                                                                            |
+| ------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Workspace / Project files | 对话的工作目录（`cwd`），用于项目源码和项目资源 | 新对话默认取 `CODEX_WEB_DEFAULT_WORKSPACE`，也可手动选择；已有 session 使用自身目录 |
+| Codex home                | Codex 配置、认证与 session 记录                 | `CODEX_HOME`，未设置时为 `~/.codex`                                                 |
+| Session files             | 当前会话的附件与默认独立交付文件                | 固定为 `${CODEX_HOME}/web-ui/<thread.id>/`                                          |
+
+例如 `CODEX_WEB_DEFAULT_WORKSPACE=/home/codex/workspace`、`CODEX_HOME=/home/codex/.codex` 时，新对话的 `cwd` 是 `/home/codex/workspace`，附件与默认独立交付文件保存在 `/home/codex/.codex/web-ui/<thread.id>/`。设置默认 workspace 不会改变 Codex home 或 Session files 的位置。
+
+Composer 上传文件使用 app-server 返回的 `thread.id`（不是 `sessionId`），保存在 `${CODEX_HOME}/web-ui/<thread.id>/example.pdf`。新附件优先保留原文件名，同一会话中遇到同名文件或目录时依次使用 `example (2).pdf`、`example (3).pdf`，以独占创建避免覆盖已有文件。文件名中的路径和不安全字符会被清理，超长名称会按 UTF-8 字节限制缩短，内部元数据保留前缀会添加下划线。附件与消息的关联仍由元数据中的 ID 和实际路径维护。已有附件保持原名和原位置，带消息 ID 前缀的旧附件继续按记录的路径读取；老会话后续上传的附件也使用新命名规则。未设置 `CODEX_HOME` 时默认使用 `~/.codex`；相对路径按 Web UI 启动目录解析，并将同一绝对路径传给 Codex。项目的 `cwd` 保持不变，不再在项目中创建 `.files` 或修改 `.gitignore`。
+
+Web UI 的会话文件规则内置于 [server/web-instructions.ts](server/web-instructions.ts)，无需独立模板文件。启动时检查 `${CODEX_HOME}/AGENTS.md`，将内置规则安装到 `codex-web:thread-files` 标记块中。规则一致时不重复写入；内置规则更新时只更新这个块，保留其他内容。规则只适用于带有 Web UI 文件上下文的轮次。每轮仅提供当前会话目录的绝对路径和本轮附件路径，内部上下文不显示在消息气泡里。安装发生在启动 Codex app-server 之前；此前已运行的其他 Codex 会话需要重新加载全局指令。
+
+默认独立交付文件与附件直接保存在会话目录，用户指定其他位置时尊重用户要求；项目源码和构建产物仍保存在项目路径。后端确保会话目录存在，但生成文件仍由 Agent 保存。Ask when needed 模式只将当前会话目录额外加入可写范围，不开放整个 `CODEX_HOME`；只读模式不允许 Agent 写文件。Use config.toml 的传统 workspace-write 配置也增加当前会话目录；命名权限配置保持原定义，其访问范围需要用户在该配置中允许。
+
+恢复旧会话时，workspace 下的 `.files/<thread.id>/`、旧版 `uploads/` 和 `CODEX_HOME/attachments/codex-web/` 附件仍从原位置读取，不自动迁移。分叉会话的新文件使用新 thread 目录，历史附件继续引用父会话；历史回复中的父会话文件链接可预览图片或直接下载原文件。删除会话不会删除新会话目录或项目中的旧文件，避免误删交付文件和分叉仍在使用的文件；确认不再需要后，可按 thread 目录手动清理。
 
 子路径部署示例：
 
@@ -439,11 +496,20 @@ export CODEX_WEB_BASE_PATH=/codex
 /codex/?file=src%2Fserver%2Fusers.ts
 ```
 
-点击后直接在 Files 抽屉中预览；复制到新标签页打开也不会跳出 `/codex/`。只有当前 workspace 内的文件可以打开，workspace 外的绝对路径会显示为不可用链接。
+点击后直接在 Files 抽屉中预览；复制到新标签页打开也不会跳出 `/codex/`。当前 workspace、当前会话文件目录及分叉继承的会话文件链接可按对应范围打开；其他位置的普通文件链接会显示为不可用。
 
 ## Files 文件管理与上传
 
-Files 抽屉的路径栏提供 New 和 Upload。默认在 workspace 根目录操作；先点击文件树中的目录，可以切换目标目录。New 创建空文件，预览顶部的 Delete 会在二次确认后删除当前文件。创建、删除和上传都被限制在当前 workspace 内；Delete 不会删除目录或符号链接。
+Files 抽屉顶部提供两个独立入口：
+
+- **Project files**：当前会话的项目目录，使用蓝色标识，浏览源码与项目资源。
+- **Session files**：当前会话的附件与生成文件，使用紫色标识，存放在 `${CODEX_HOME}/web-ui/<thread.id>/`。已有会话默认打开此入口；新会话尚未建立时仅能使用项目文件。
+
+两个入口分别显示用途、可展开的实际存储路径和明确的 Upload to 目标。路径栏提供 New 和 Upload；点击目录或打开文件会更新目标目录，点击根目录按钮可以回到当前范围的根目录。切换入口时清空当前搜索和预览，有未保存的编辑时会提示保留或放弃。操作过程中禁止切换范围，防止上传目标发生混淆。搜索只覆盖当前范围。
+
+聊天文件链接会识别项目路径和当前会话路径，显示 Project / Session 标记，并自动打开对应入口；图片通过相应范围预览和下载。带 `file`、`scope` 和 `session` 参数的链接可重新定位同一会话文件。其他位置的普通文件链接仍不可直接访问。
+
+New 创建空文件，预览顶部的 Delete 会在二次确认后删除当前文件。所有文件接口都根据范围解析根目录并检查路径，拒绝越界访问；Session files 不展示或允许修改内部附件元数据。Delete 不会删除目录或符号链接。
 
 限制：
 
@@ -451,13 +517,13 @@ Files 抽屉的路径栏提供 New 和 Upload。默认在 workspace 根目录操
 - 单批最大 25 MB
 - 单次最多选择 10 个文件
 - 不覆盖同名文件
-- 只能写入当前 workspace，不能通过 `..`、绝对路径或符号链接逃逸
+- 只能写入当前选择的 Project files 或 Session files 范围，不能通过 `..`、绝对路径或符号链接逃逸
 
 文本文件上传后可以直接预览和编辑；二进制文件会出现在文件树中，不支持预览时会在预览区中央提供大号 Download 按钮。
 
 Files 只对常见纯文本和代码格式启用预览/编辑，例如 `.txt`、`.md`、`.json`、`.yaml`、`.csv`、`.js`、`.ts`、`.tsx`、`.py`、`.go`、`.rs`、`.java`、`.c/.cpp`、`.html`、`.css`、`.sh`、`.toml`、`.ini`、`.sql`、`.ps1`，以及 `Dockerfile`、`Makefile`、`.env`、`.gitignore` 等。文本预览/编辑上限为 10 MB；超过 1 MB 时使用不带逐行 DOM 的轻量预览。
 
-PNG、JPEG、GIF、WebP、SVG、BMP 和 AVIF 会直接显示图片预览并可下载。Word、PDF、Excel、压缩包和其他二进制/办公格式可以上传和保存在 workspace 中，但 Files 不会尝试解析或编辑，只显示文件大小、不可预览说明和下载入口。
+PNG、JPEG、GIF、WebP、SVG、BMP 和 AVIF 会直接显示图片预览并可下载。Word、PDF、Excel、压缩包和其他二进制/办公格式可以上传到当前选择的 Project files 或 Session files，但 Files 不会尝试解析或编辑，只显示文件大小、不可预览说明和下载入口。
 
 ## 多标签页与文件保护
 
@@ -479,7 +545,7 @@ Files 搜索会查找子目录中的文件名/相对路径，跳过构建产物�
 
 每条已完成的 Codex 文本回复下方提供复制与分支操作。复制会保留回答的原始 Markdown；分支使用 app-server 原生 `thread/fork` 与该回复的 `lastTurnId` 创建新 session，只保留到这条回复为止，后续对话不会带入，原 session 也不会被修改。这里不提供点赞、点踩等无关操作。Thread/Turn 提供的时间会显示在用户与 Codex 消息下方；历史消息使用 turn 开始/完成时间，实时消息使用 item 事件时间。
 
-New thread 的默认模型与 reasoning effort 来自当前工作区生效的 `config.toml`（`model`、`model_reasoning_effort`）。仅在配置未指定时，才回退到 app-server 模型目录中标记为默认的模型；不会再直接把模型列表第一项当成用户配置。
+点击 New thread 时，默认模型、reasoning effort 与权限会按默认 workspace 的有效 `config.toml` 重新加载；手动选择其他 workspace 后，改为读取所选目录的配置。模型与 reasoning effort 对应 `model`、`model_reasoning_effort`；仅在配置未指定时，才回退到 app-server 模型目录中标记为默认的模型。
 
 ## 内存说明
 
@@ -577,7 +643,17 @@ npm run build
 
 ### 新对话无法发送
 
-先在 workspace picker 中选择目录。查看已有 session 不要求预先选择 workspace。
+确认新对话已选中 workspace。未设置 `CODEX_WEB_DEFAULT_WORKSPACE` 或默认目录无效时，需在 workspace picker 中手动选择目录；查看已有 session 不要求预先选择 workspace。
+
+### 新建对话没有使用配置的默认目录
+
+1. 确认变量名是 `CODEX_WEB_DEFAULT_WORKSPACE`，且指向已存在、服务运行用户可访问的目录。
+2. 确认变量传给了启动 Web 服务的进程：shell 需在 `start` / `restart` 前 `export`；systemd 需修改其 `EnvironmentFile` 后重启服务。在其他终端设置变量或仅写入项目 `.env` 不会更新正在运行的服务。
+3. 检查服务日志是否包含 `Ignoring invalid CODEX_WEB_DEFAULT_WORKSPACE`；如有，修复目录或权限后重启服务。
+4. 更新过源码时，先重新执行 `npm run build`，再重启 Web 服务并重新载入页面，确保前后端都使用最新版本。
+5. 点击 **New thread** 检查目录。刷新旧的 `?session=<id>` 地址会恢复旧 session 的 workspace；分支也继承源 session 的 workspace。
+
+默认目录只控制新对话的工作目录。若检查的是附件或独立交付文件，应在 **Session files** 中查看 `${CODEX_HOME}/web-ui/<thread.id>/`。
 
 ### Account usage 显示 Unavailable
 
