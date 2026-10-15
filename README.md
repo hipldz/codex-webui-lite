@@ -1,10 +1,10 @@
-# Codex Web Harness
+# Codex Web UI
 
 一个运行在本机的轻量 Codex Web UI。浏览器通过 HTTP API 和增量轮询连接 Node 服务，Node 再通过 stdio JSON-RPC 管理常驻的 `codex app-server`。
 
 Codex 的登录状态、配置和 session 仍由 Codex 自己管理；Web UI 不读取或保存 Codex 凭据。
 
-![Codex WebUI 操作演示](https://hipldz.com/api/v1/website/image/ai-sharing/codex-webui-lite-demo.gif@original)
+![Codex Web UI 操作演示](https://hipldz.com/api/v1/website/image/ai-sharing/codex-webui-lite-demo.gif@original)
 
 ## 功能
 
@@ -335,7 +335,7 @@ sudo chmod 600 /etc/codex-web.env
 
 ```ini
 [Unit]
-Description=Codex Web
+Description=Codex Web UI
 After=network.target
 
 [Service]
@@ -593,7 +593,7 @@ Node 不维护浏览器 WebSocket。浏览器在生成时高频拉取增量状�
 
 生产验证中的参考值：
 
-- Harness Node RSS：约 76–79 MB
+- Web UI Node RSS：约 76–79 MB
 - Codex app-server RSS：约 92–129 MB
 - Node V8 heap 上限：256 MB
 
