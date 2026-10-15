@@ -694,3 +694,7 @@ npm run build
 ### Account usage 显示 Unavailable
 
 当前 Codex 认证方式没有提供账号 usage/rate-limit 接口。对话、文件和 session 功能仍可正常使用。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。
