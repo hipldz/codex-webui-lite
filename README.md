@@ -11,6 +11,7 @@ Codex 的登录状态、配置和 session 仍由 Codex 自己管理；Web UI 不
 - 从 app-server 分页加载本机 Codex CLI、VS Code、exec、app-server 和 sub-agent sessions
 - 创建、恢复、Branch、归档、取消归档、批量操作和删除 session
 - 当前 session 写入 `?session=<id>`，刷新页面后自动恢复
+- 打开页面时申请浏览器通知权限，任务成功完成后显示系统通知，点击可返回对应会话
 - 新对话默认使用 `CODEX_WEB_DEFAULT_WORKSPACE`；未配置或目录无效时手动选择 workspace；已有 session 自动恢复自己的 workspace
 - 从真实 `model/list` 读取模型与 reasoning effort
 - 流式显示回答、thinking、命令、文件修改、工具调用、网页搜索、图片、hook、子 agent、review、计划更新与警告
@@ -25,6 +26,14 @@ Codex 的登录状态、配置和 session 仍由 Codex 自己管理；Web UI 不
 - 按文件查看 Changes/Diff
 - 显示 context window、实时内存占用，以及独立的 5-hour / Weekly account usage 窗口
 - 支持部署在 `/codex/` 之类的反向代理子路径；不要求 WebSocket 反代
+
+## 任务完成通知
+
+打开真实 Web UI 时，如果尚未决定通知权限，页面会尝试向浏览器申请。Firefox、Edge 等浏览器可能要求先有用户点击；此时点击页面提示条或 **Settings → Task notifications → Enable notifications** 即可申请。已允许或拒绝时不会重复弹出权限请求；拒绝后需在浏览器的站点设置中手动允许。Settings 会显示当前权限状态，提示条可以关闭。
+
+任务成功完成后发送系统通知，包括当前打开和其他会话的新完成事件；失败、手动停止、恢复历史或刷新列表不会触发成功通知。同一页面收到重复的完成事件不会重复通知。点击通知会聚焦页面，必要时打开对应的 `?session=<id>` 会话，并保留部署子路径。
+
+通知需要 **HTTPS 或 localhost**；通过普通 HTTP 的远程 IP/域名访问时不可用。网页需保持打开，切换标签页或最小化浏览器仍可接收，但后台轮询和浏览器节流可能带来延迟。关闭网页后的通知需要额外实现 Web Push，本版本不包含该能力。系统是否弹出提示、播放声音仍由浏览器通知设置及 Windows 勿扰模式决定。演示页面不会自动申请权限或发送任务通知。
 
 ## 提问与计划交互
 

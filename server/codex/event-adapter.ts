@@ -94,6 +94,7 @@ export function adapt(message: JsonRpcMessage): {
   items?: UiItem[];
   running?: boolean;
   turnId?: string;
+  turnStatus?: string;
   threadStatus?: { type: string; activeFlags?: string[] };
   diff?: string;
   tokenUsage?: any;
@@ -256,7 +257,12 @@ export function adapt(message: JsonRpcMessage): {
   if (message.method === "turn/started")
     return { threadId: p.threadId, running: true, turnId: p.turn?.id };
   if (message.method === "turn/completed")
-    return { threadId: p.threadId, running: false, turnId: p.turn?.id };
+    return {
+      threadId: p.threadId,
+      running: false,
+      turnId: p.turn?.id,
+      turnStatus: p.turn?.status,
+    };
   if (message.method === "error" && p.willRetry)
     return {
       threadId: p.threadId,

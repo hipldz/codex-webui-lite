@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FolderOpen, GitCompareArrows, Menu, PanelLeftOpen, Settings2 } from "lucide-react";
+import {
+  Bell,
+  FolderOpen,
+  GitCompareArrows,
+  Menu,
+  PanelLeftOpen,
+  Settings2,
+  X,
+} from "lucide-react";
 import { Composer, type ComposerAttachment, type PermissionPreset } from "./components/Composer";
 import { Conversation } from "./components/Conversation";
 import { DiffDrawer } from "./components/DiffDrawer";
@@ -14,6 +22,7 @@ import {
 import { WorkspacePicker } from "./components/WorkspacePicker";
 import { demoItems, demoThreads, demoQuestionItems, demoPlanItems } from "./demo";
 import { useApiTransport } from "./hooks/useApiTransport";
+import { useTaskNotifications } from "./hooks/useTaskNotifications";
 import { threadIsRunning } from "./thread-status";
 import type {
   CollaborationMode,
@@ -182,6 +191,11 @@ const editDiff = (path: string, before: string, after: string) => {
 
 export function App() {
   const [threads, setThreads] = useState<Thread[]>(demo ? demoThreads : []);
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
+  const notifications = useTaskNotifications(demo);
+  const { notifyTaskComplete } = notifications;
+  const [notificationPromptDismissed, setNotificationPromptDismissed] = useState(false);
   const [boot, setBoot] = useState({
     active: !demo,
     stage: "Connecting to local server",
@@ -564,6 +578,14 @@ export function App() {
         if (message.threadId === activeRef.current?.id)
           setItems((old) => mergeItems(old, message.items));
       } else if (message.type === "event") {
+        if (message.turnStatus === "completed" && message.threadId && message.turnId) {
+          const thread = threadsRef.current.find((entry) => entry.id === message.threadId);
+          notifyTaskComplete(
+            message.threadId,
+            message.turnId,
+            thread?.name || thread?.preview || "",
+          );
+        }
         // The running-only poll stops at turn completion, so fetch its final title now.
         if (message.threadId && message.running === false)
           void sendRef.current({ type: "thread.list", refresh: true });
@@ -770,7 +792,7 @@ export function App() {
         ]);
       }
     },
-    [finishSessionLoading, beginSessionLoading],
+    [finishSessionLoading, beginSessionLoading, notifyTaskComplete],
   );
   const { connected, send } = useApiTransport(onMessage, demo);
   const sendRef = useRef(send);
@@ -1468,6 +1490,34 @@ export function App() {
             </button>
           </div>
         </header>
+        {!demo &&
+          !notificationPromptDismissed &&
+          ["default", "insecure"].includes(notifications.status) && (
+            <div className="notification-prompt" role="status">
+              <Bell aria-hidden="true" />
+              <span>
+                {notifications.status === "insecure"
+                  ? "Task notifications require HTTPS or localhost."
+                  : "Get a browser notification when your task finishes."}
+              </span>
+              {notifications.status === "default" && (
+                <button
+                  className="notification-enable"
+                  disabled={notifications.requesting}
+                  onClick={() => void notifications.requestPermission()}
+                >
+                  {notifications.requesting ? "Waiting for permission…" : "Enable notifications"}
+                </button>
+              )}
+              <button
+                className="icon-button"
+                aria-label="Dismiss notification reminder"
+                onClick={() => setNotificationPromptDismissed(true)}
+              >
+                <X />
+              </button>
+            </div>
+          )}
         <main className={`chat-main ${items.length === 0 ? "is-empty" : ""}`}>
           <Conversation
             items={items}
@@ -1612,6 +1662,7 @@ export function App() {
           account={account}
           threadUsage={threadUsage}
           active={Boolean(active)}
+          notifications={notifications}
           runtimeAction={(action) => send({ type: `runtime.${action}` })}
         />
       )}

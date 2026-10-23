@@ -1,4 +1,5 @@
-import { Activity, CircleGauge, Play, RefreshCw, Square, Timer, X } from "lucide-react";
+import { Activity, Bell, CircleGauge, Play, RefreshCw, Square, Timer, X } from "lucide-react";
+import type { BrowserNotificationControls } from "../hooks/useTaskNotifications";
 
 export type ResourceUsage = {
   rss: number;
@@ -65,6 +66,7 @@ export function SettingsDrawer({
   account,
   threadUsage,
   active,
+  notifications,
   runtimeAction,
 }: {
   close: () => void;
@@ -74,6 +76,7 @@ export function SettingsDrawer({
   account: any;
   threadUsage: ThreadUsage | null;
   active: boolean;
+  notifications: BrowserNotificationControls;
   runtimeAction: (action: "start" | "stop" | "restart") => void;
 }) {
   const summary = account?.usage?.summary;
@@ -101,6 +104,36 @@ export function SettingsDrawer({
           </button>
         </header>
         <div className="settings-scroll">
+          <section className="settings-section notification-settings">
+            <h3>
+              <Bell />
+              Task notifications
+            </h3>
+            <p>
+              {
+                {
+                  granted:
+                    "Enabled. Successful tasks send a notification while this page stays open.",
+                  default: "Allow browser notifications to be notified when a task finishes.",
+                  denied:
+                    "Blocked. Allow notifications in your browser’s site settings to enable them.",
+                  insecure:
+                    "Notifications require HTTPS or localhost. Open this site over HTTPS to enable them.",
+                  unsupported: "This browser does not support desktop notifications.",
+                }[notifications.status]
+              }
+            </p>
+            {notifications.error && <p role="status">{notifications.error}</p>}
+            {notifications.status === "default" && (
+              <button
+                className="notification-enable"
+                disabled={notifications.requesting}
+                onClick={() => void notifications.requestPermission()}
+              >
+                {notifications.requesting ? "Waiting for permission…" : "Enable notifications"}
+              </button>
+            )}
+          </section>
           <section className="settings-section runtime-controls">
             <h3>
               <Activity />
