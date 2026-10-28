@@ -35,7 +35,13 @@ export type UiItem = TimedItem &
         }>;
         attachmentThreadId?: string;
       }
-    | { type: "assistant_message"; id: string; text: string; streaming: boolean }
+    | {
+        type: "assistant_message";
+        id: string;
+        text: string;
+        streaming: boolean;
+        phase?: "commentary" | "final_answer";
+      }
     | { type: "generated_image"; id: string; src: string; alt: string }
     | { type: "thinking"; id: string; text: string; status: "running" | "done" }
     | {
@@ -59,7 +65,7 @@ export type UiItem = TimedItem &
         id: string;
         requestId: JsonRpcId;
         description: string;
-        status: "pending" | "approved" | "denied";
+        status: "pending" | "approved" | "denied" | "expired";
         decisions: ApprovalDecision[];
         approvalKind: "command" | "file";
       }

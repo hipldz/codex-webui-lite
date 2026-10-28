@@ -41,7 +41,7 @@ async def main():
           const capture = () => {
             const text = document.querySelector('.assistant-body')?.textContent?.trim() || '';
             if (text && window.__streamSamples.at(-1) !== text) window.__streamSamples.push(text);
-            if (document.querySelector('.tool-row.thinking, .thinking-live')) window.__thinkingSeen = true;
+            if (document.querySelector('.activity-group.running, .tool-row.thinking, .thinking-live')) window.__thinkingSeen = true;
           };
           new MutationObserver(capture).observe(root, {subtree: true, childList: true, characterData: true});
         """)
@@ -52,6 +52,9 @@ async def main():
         await page.locator('button.send[aria-label="Send"]').wait_for(timeout=120_000)
         samples = await page.evaluate("window.__streamSamples")
         thinking = await page.evaluate("window.__thinkingSeen")
+        reasoning_group = page.locator(".activity-group").filter(has_text="reasoning").first
+        if await reasoning_group.count():
+            await reasoning_group.locator(".activity-toggle").click()
         reasoning_cards = await page.locator(".tool-row.thinking").count()
         assert model_count > 0, "model/list did not populate the picker"
         assert len(samples) >= 2, f"assistant text did not stream; samples={len(samples)}"

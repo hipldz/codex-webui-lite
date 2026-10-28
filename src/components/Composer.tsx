@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   ClipboardList,
@@ -24,6 +24,8 @@ export type ComposerAttachment = {
   data: string;
   size: number;
 };
+type ComposerDraft = { text: string; attachments: ComposerAttachment[] };
+const hasDraft = (draft: ComposerDraft) => Boolean(draft.text || draft.attachments.length);
 export type PermissionPreset = "ask" | "full" | "read-only" | "config";
 const textTypes = new Set([
   "text/plain",
@@ -143,6 +145,7 @@ export function Composer({
   running,
   queued = false,
   restoreDraft,
+  draftKey,
   disabled,
   send,
   stop,
@@ -159,12 +162,20 @@ export function Composer({
   mode,
   onMode,
   pendingQuestions = 0,
+  pendingApprovals = 0,
   blockingQuestion = false,
   onAnswerQuestion,
+  onReviewApproval,
 }: {
   running: boolean;
   queued?: boolean;
-  restoreDraft?: { id: string; text: string; attachments: ComposerAttachment[] } | null;
+  restoreDraft?: {
+    id: string;
+    threadId: string;
+    text: string;
+    attachments: ComposerAttachment[];
+  } | null;
+  draftKey: string;
   disabled: boolean;
   send: (text: string, attachments: ComposerAttachment[]) => Promise<boolean>;
   stop: () => void;
@@ -181,11 +192,21 @@ export function Composer({
   mode: CollaborationMode;
   onMode: (mode: CollaborationMode) => void;
   pendingQuestions?: number;
+  pendingApprovals?: number;
   blockingQuestion?: boolean;
   onAnswerQuestion: () => void;
+  onReviewApproval: () => void;
 }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const drafts = useRef(new Map<string, ComposerDraft>());
+  const alternateDrafts = useRef(new Map<string, ComposerDraft[]>());
+  const [alternateCount, setAlternateCount] = useState(0);
+  const currentDraftKey = useRef(draftKey);
+  const currentDraft = useRef({ text, attachments });
+  const attachmentTarget = useRef<{ key: string } | null>(null);
+  const restoredDraftId = useRef("");
+  currentDraft.current = { text, attachments };
   const [attachmentError, setAttachmentError] = useState("");
   const [preview, setPreview] = useState<ComposerAttachment | null>(null);
   const submitting = useRef(false);
@@ -195,6 +216,36 @@ export function Composer({
   const area = useRef<HTMLTextAreaElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const wrapper = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (currentDraftKey.current === draftKey) return;
+    const previousKey = currentDraftKey.current;
+    drafts.current.set(previousKey, currentDraft.current);
+    const firstWorkspace =
+      previousKey === "workspace:unselected" &&
+      draftKey.startsWith("workspace:") &&
+      draftKey !== previousKey;
+    const existing = drafts.current.get(draftKey);
+    const transferring =
+      firstWorkspace &&
+      (hasDraft(currentDraft.current) || attachmentTarget.current?.key === previousKey);
+    if (transferring && existing && hasDraft(existing)) {
+      const alternates = alternateDrafts.current.get(draftKey) || [];
+      alternates.push(existing);
+      alternateDrafts.current.set(draftKey, alternates);
+    }
+    const next = transferring ? currentDraft.current : existing || { text: "", attachments: [] };
+    if (firstWorkspace) {
+      drafts.current.delete(previousKey);
+      if (attachmentTarget.current?.key === previousKey) attachmentTarget.current.key = draftKey;
+    }
+    currentDraftKey.current = draftKey;
+    currentDraft.current = next;
+    setText(next.text);
+    setAttachments(next.attachments);
+    setAlternateCount(alternateDrafts.current.get(draftKey)?.length || 0);
+    setAttachmentError("");
+    setPreview(null);
+  }, [draftKey]);
   useEffect(() => {
     const element = wrapper.current;
     const parent = element?.closest<HTMLElement>(".chat-main");
@@ -222,12 +273,46 @@ export function Composer({
     return () => removeEventListener("keydown", close);
   }, [preview]);
   useEffect(() => {
-    if (restoreDraft) {
+    if (
+      restoreDraft &&
+      restoreDraft.id !== restoredDraftId.current &&
+      !addingFiles &&
+      draftKey === `thread:${restoreDraft.threadId}`
+    ) {
+      restoredDraftId.current = restoreDraft.id;
+      const current = currentDraft.current;
+      const same =
+        current.text === restoreDraft.text &&
+        current.attachments.length === restoreDraft.attachments.length &&
+        current.attachments.every((item, index) => item.id === restoreDraft.attachments[index].id);
+      if (!same && hasDraft(current)) {
+        const key = currentDraftKey.current;
+        const alternates = alternateDrafts.current.get(key) || [];
+        alternates.push(current);
+        alternateDrafts.current.set(key, alternates);
+        setAlternateCount(alternates.length);
+      }
+      currentDraft.current = { text: restoreDraft.text, attachments: restoreDraft.attachments };
       setText(restoreDraft.text);
       setAttachments(restoreDraft.attachments);
       area.current?.focus();
     }
-  }, [restoreDraft]);
+  }, [restoreDraft, addingFiles, draftKey]);
+  const switchDraft = () => {
+    const key = currentDraftKey.current;
+    const alternates = alternateDrafts.current.get(key);
+    if (!alternates?.length || adding.current || submitting.current) return;
+    const next = alternates.shift()!;
+    if (hasDraft(currentDraft.current)) alternates.push(currentDraft.current);
+    if (!alternates.length) alternateDrafts.current.delete(key);
+    setAlternateCount(alternates.length);
+    currentDraft.current = next;
+    setText(next.text);
+    setAttachments(next.attachments);
+    setAttachmentError("");
+    setPreview(null);
+    area.current?.focus();
+  };
   const submit = async () => {
     if (
       (!text.trim() && !attachments.length) ||
@@ -239,13 +324,25 @@ export function Composer({
     )
       return;
     submitting.current = true;
+    const submittedKey = currentDraftKey.current;
+    const submittedDraft = { text, attachments };
+    const restoreSubmittedDraft = () => {
+      if (!submittedKey.startsWith("workspace:") || currentDraftKey.current === submittedKey)
+        return;
+      const saved = drafts.current.get(submittedKey) || submittedDraft;
+      drafts.current.delete(submittedKey);
+      setText(saved.text);
+      setAttachments(saved.attachments);
+    };
     try {
       if (await send(text.trim(), attachments)) {
+        drafts.current.delete(submittedKey);
         setText("");
         setAttachments([]);
         setAttachmentError("");
-      }
+      } else restoreSubmittedDraft();
     } catch (error) {
+      restoreSubmittedDraft();
       setAttachmentError(
         error instanceof Error ? error.message : "Could not send; your draft is preserved",
       );
@@ -256,6 +353,8 @@ export function Composer({
   const addFiles = async (files: FileList | File[] | null) => {
     if (!files || adding.current) return;
     adding.current = true;
+    const target = { key: currentDraftKey.current };
+    attachmentTarget.current = target;
     setAddingFiles(true);
     setAttachmentError("");
     try {
@@ -289,11 +388,20 @@ export function Composer({
           size: file.size,
         });
       }
-      setAttachments((old) => [...old, ...next].slice(0, 4));
+      if (currentDraftKey.current === target.key)
+        setAttachments((old) => [...old, ...next].slice(0, 4));
+      else {
+        const saved = drafts.current.get(target.key) || { text: "", attachments: [] };
+        drafts.current.set(target.key, {
+          ...saved,
+          attachments: [...saved.attachments, ...next].slice(0, 4),
+        });
+      }
       if (input.current) input.current.value = "";
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : "Could not read attachment");
     } finally {
+      attachmentTarget.current = null;
       adding.current = false;
       setAddingFiles(false);
     }
@@ -316,6 +424,21 @@ export function Composer({
   return (
     <>
       <div className="composer-wrap" ref={wrapper}>
+        {pendingApprovals > 0 && (
+          <button
+            type="button"
+            className="question-banner approval-banner"
+            onClick={onReviewApproval}
+          >
+            <ShieldCheck />
+            <span>
+              {pendingApprovals === 1
+                ? "Approval is needed to continue"
+                : `${pendingApprovals} approvals need review`}
+            </span>
+            <b>Review</b>
+          </button>
+        )}
         {pendingQuestions > 0 && (
           <button type="button" className="question-banner" onClick={onAnswerQuestion}>
             <CircleHelp />
@@ -328,6 +451,16 @@ export function Composer({
           </button>
         )}
         <div className="composer">
+          {alternateCount > 0 && (
+            <button
+              type="button"
+              className="composer-draft-switch"
+              disabled={running || addingFiles}
+              onClick={switchDraft}
+            >
+              Switch to saved draft ({alternateCount})
+            </button>
+          )}
           {attachments.length > 0 && (
             <div className="attachment-list">
               {attachments.map((attachment) => (

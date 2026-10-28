@@ -36,10 +36,15 @@ export function QuestionCard({
     }
   });
   const [index, setIndex] = useState(0);
+  const [expandedQuestion, setExpandedQuestion] = useState("");
+  const [expandedOptions, setExpandedOptions] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
   const [error, setError] = useState("");
   const question = item.questions[index];
+  const longQuestion = Boolean(
+    question && (question.question.length > 180 || question.question.split("\n").length > 3),
+  );
   const pending = item.status === "pending";
   const answerFor = (id: string) => {
     const value = draft[id];
@@ -168,70 +173,142 @@ export function QuestionCard({
               ))}
             </nav>
           )}
-          <fieldset disabled={disabled || busy}>
-            <legend>{question.question}</legend>
-            <div className="question-options">
-              {question.options?.map((option, position) => (
-                <label
-                  className={`question-option ${draft[question.id]?.choice === option.label ? "selected" : ""}`}
-                  key={`${position}-${option.label}`}
+          <div className="question-body">
+            <fieldset>
+              <legend>
+                <span
+                  className={
+                    longQuestion && expandedQuestion !== question.id
+                      ? "question-text collapsed"
+                      : "question-text"
+                  }
                 >
-                  <input
-                    type="radio"
-                    name={`${key}:${question.id}`}
-                    checked={draft[question.id]?.choice === option.label}
-                    onChange={() =>
-                      update({ choice: option.label, text: draft[question.id]?.text || "" })
+                  {question.question}
+                </span>
+                {longQuestion && (
+                  <button
+                    type="button"
+                    className="question-expand"
+                    aria-expanded={expandedQuestion === question.id}
+                    onClick={() =>
+                      setExpandedQuestion(expandedQuestion === question.id ? "" : question.id)
                     }
-                  />
-                  <span>
-                    <b>{option.label}</b>
-                    {option.description && <small>{option.description}</small>}
-                  </span>
-                </label>
-              ))}
-            </div>
-            {(!question.options?.length || question.isOther) && (
-              <div className="question-custom">
-                {Boolean(question.options?.length) && (
-                  <label>
-                    <input
-                      type="radio"
-                      name={`${key}:${question.id}`}
-                      checked={draft[question.id]?.choice === OTHER}
-                      onChange={() =>
-                        update({ choice: OTHER, text: draft[question.id]?.text || "" })
-                      }
-                    />
-                    <span>Write your own answer</span>
-                  </label>
+                  >
+                    {expandedQuestion === question.id ? "Show less" : "Show full question"}
+                  </button>
                 )}
-                {question.isSecret ? (
-                  <input
-                    aria-label="Your answer"
-                    type="password"
-                    autoComplete="off"
-                    maxLength={16000}
-                    value={draft[question.id]?.text || ""}
-                    onChange={(event) => update({ choice: OTHER, text: event.target.value })}
-                  />
-                ) : (
-                  <textarea
-                    aria-label="Your answer"
-                    rows={3}
-                    maxLength={16000}
-                    placeholder="Add your answer or a different preference…"
-                    value={draft[question.id]?.text || ""}
-                    onFocus={() => {
-                      if (draft[question.id]?.choice !== OTHER)
-                        update({ choice: OTHER, text: draft[question.id]?.text || "" });
-                    }}
-                    onChange={(event) => update({ choice: OTHER, text: event.target.value })}
-                  />
-                )}
+              </legend>
+              <div className="question-options">
+                {question.options?.map((option, position) => {
+                  const optionKey = `${question.id}:${position}`;
+                  const longLabel =
+                    option.label.length > 140 || option.label.split("\n").length > 2;
+                  const longDescription = Boolean(
+                    option.description &&
+                    (option.description.length > 120 || option.description.split("\n").length > 2),
+                  );
+                  const expanded = Boolean(expandedOptions[optionKey]);
+                  return (
+                    <div
+                      className={`question-option ${draft[question.id]?.choice === option.label ? "selected" : ""}`}
+                      key={`${position}-${option.label}`}
+                    >
+                      <label className="question-option-control">
+                        <input
+                          type="radio"
+                          name={`${key}:${question.id}`}
+                          disabled={disabled || busy}
+                          checked={draft[question.id]?.choice === option.label}
+                          onChange={() =>
+                            update({ choice: option.label, text: draft[question.id]?.text || "" })
+                          }
+                        />
+                        <span>
+                          <b
+                            className={
+                              longLabel && !expanded ? "option-label collapsed" : undefined
+                            }
+                          >
+                            {option.label}
+                          </b>
+                          {option.description && (
+                            <small
+                              className={
+                                longDescription && !expanded
+                                  ? "option-description collapsed"
+                                  : "option-description"
+                              }
+                            >
+                              {option.description}
+                            </small>
+                          )}
+                        </span>
+                      </label>
+                      {(longLabel || longDescription) && (
+                        <button
+                          type="button"
+                          className="question-expand option-expand"
+                          aria-expanded={expanded}
+                          onClick={() =>
+                            setExpandedOptions((old) => ({ ...old, [optionKey]: !old[optionKey] }))
+                          }
+                        >
+                          {expanded
+                            ? "Show less"
+                            : longLabel
+                              ? "Show full option"
+                              : "Show full description"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            )}
-          </fieldset>
+              {(!question.options?.length || question.isOther) && (
+                <div className="question-custom">
+                  {Boolean(question.options?.length) && (
+                    <label>
+                      <input
+                        type="radio"
+                        name={`${key}:${question.id}`}
+                        disabled={disabled || busy}
+                        checked={draft[question.id]?.choice === OTHER}
+                        onChange={() =>
+                          update({ choice: OTHER, text: draft[question.id]?.text || "" })
+                        }
+                      />
+                      <span>Write your own answer</span>
+                    </label>
+                  )}
+                  {question.isSecret ? (
+                    <input
+                      aria-label="Your answer"
+                      type="password"
+                      autoComplete="off"
+                      disabled={disabled || busy}
+                      maxLength={16000}
+                      value={draft[question.id]?.text || ""}
+                      onChange={(event) => update({ choice: OTHER, text: event.target.value })}
+                    />
+                  ) : (
+                    <textarea
+                      aria-label="Your answer"
+                      rows={3}
+                      disabled={disabled || busy}
+                      maxLength={16000}
+                      placeholder="Add your answer or a different preference…"
+                      value={draft[question.id]?.text || ""}
+                      onFocus={() => {
+                        if (draft[question.id]?.choice !== OTHER)
+                          update({ choice: OTHER, text: draft[question.id]?.text || "" });
+                      }}
+                      onChange={(event) => update({ choice: OTHER, text: event.target.value })}
+                    />
+                  )}
+                </div>
+              )}
+            </fieldset>
+          </div>
           {error && (
             <p className="interaction-error" role="alert">
               {error}
@@ -288,7 +365,10 @@ export function QuestionCard({
           </footer>
         </>
       ) : (
-        <div className="question-receipt">
+        <details className="question-receipt">
+          <summary>
+            View {item.status === "answered" ? "questions and answers" : "question details"}
+          </summary>
           {item.questions.map((question) => (
             <div key={question.id}>
               <b>{question.question}</b>
@@ -297,7 +377,7 @@ export function QuestionCard({
               )}
             </div>
           ))}
-        </div>
+        </details>
       )}
     </section>
   );

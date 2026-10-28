@@ -2,31 +2,33 @@ import { defaultUrlTransform } from "react-markdown";
 import type { FileScope } from "./types";
 
 export const normalizeFilePath = (value: string) => {
+  const path = value.replace(/^file:\/\//, "").split(/[?#]/, 1)[0];
   try {
-    return decodeURIComponent(value)
-      .replace(/^file:\/\//, "")
+    return decodeURIComponent(path)
       .replaceAll("\\", "/")
-      .split(/[?#]/, 1)[0]
       .replace(/:\d+(?::\d+)?$/, "");
   } catch {
-    return value
-      .replaceAll("\\", "/")
-      .split(/[?#]/, 1)[0]
-      .replace(/:\d+(?::\d+)?$/, "");
+    return path.replaceAll("\\", "/").replace(/:\d+(?::\d+)?$/, "");
   }
 };
 
 export function workspaceFile(href: string, workspace: string) {
   if (!href || href.startsWith("#") || /^(https?|mailto|tel):/i.test(href)) return null;
   let candidate = normalizeFilePath(href);
-  const root = workspace.replaceAll("\\", "/").replace(/\/$/, "");
+  const normalizedRoot = workspace.replaceAll("\\", "/");
+  const root = normalizedRoot === "/" ? "/" : normalizedRoot.replace(/\/$/, "");
   const absolute = candidate.startsWith("/") || /^[a-z]:\//i.test(candidate);
   if (absolute) {
     const compareCandidate = /^[a-z]:/i.test(candidate) ? candidate.toLowerCase() : candidate;
     const compareRoot = /^[a-z]:/i.test(root) ? root.toLowerCase() : root;
-    if (!compareRoot || !compareCandidate.startsWith(`${compareRoot}/`))
+    if (
+      !compareRoot ||
+      !(compareRoot === "/"
+        ? compareCandidate.startsWith("/")
+        : compareCandidate.startsWith(`${compareRoot}/`))
+    )
       return { unavailable: true as const, path: "" };
-    candidate = candidate.slice(root.length + 1);
+    candidate = candidate.slice(root === "/" ? 1 : root.length + 1);
   } else {
     candidate = candidate.replace(/^\.\//, "");
     const rootName = root.split("/").pop();

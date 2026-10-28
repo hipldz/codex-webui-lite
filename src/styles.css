@@ -455,6 +455,15 @@ svg {
   height: 10px;
   animation: spin 1s linear infinite;
 }
+.thread-attention {
+  flex: none;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #fff0d5;
+  color: #8a5418;
+  font-size: 8px;
+  font-weight: 650;
+}
 .thread b {
   overflow: hidden;
   font-size: 11px;
@@ -749,11 +758,28 @@ svg {
   border-radius: 16px 16px 5px 16px;
   background: #f1f1ee;
   color: #292a27;
+  overflow-wrap: anywhere;
 }
 .user-bubble p {
   margin: 0;
   font-size: 12.5px;
   line-height: 1.6;
+  white-space: pre-wrap;
+}
+.user-bubble .user-text.collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  overflow: hidden;
+}
+.user-text-toggle,
+.question-expand {
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  font-size: 11px;
+  cursor: pointer;
 }
 .user-bubble p + p {
   margin-top: 8px;
@@ -900,6 +926,7 @@ svg {
 .assistant-body {
   min-width: 0;
   color: var(--ink);
+  overflow-wrap: anywhere;
 }
 .assistant-body p {
   margin: 0 0 11px;
@@ -947,6 +974,7 @@ svg {
 .user-bubble pre {
   max-width: 100%;
   overflow-x: auto;
+  overflow-wrap: normal;
   padding: 14px;
   border-radius: 10px;
   background: #20211f;
@@ -1064,13 +1092,19 @@ svg {
   border-radius: 13px;
   background: #fafaf8;
 }
-.activity-group > header {
+.activity-toggle {
+  width: 100%;
   height: 48px;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 0 13px;
+  border: 0;
   border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .activity-icon {
   width: 27px;
@@ -1097,21 +1131,59 @@ svg {
     transform: rotate(360deg);
   }
 }
-.activity-group > header div {
+.activity-label {
   display: flex;
+  min-width: 0;
+  flex: 1;
   flex-direction: column;
   gap: 2px;
 }
-.activity-group > header b {
+.activity-toggle b {
   font-size: 10.5px;
   font-weight: 600;
 }
-.activity-group > header small {
+.activity-toggle small {
   color: var(--muted);
   font-size: 8.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-chevron {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+.activity-chevron.open {
+  transform: rotate(90deg);
+}
+.activity-error {
+  color: var(--red);
+  font-style: normal;
+  font-weight: 600;
 }
 .activity-list {
   padding: 4px 0;
+}
+.activity-commentary {
+  padding: 12px 14px;
+  overflow-wrap: anywhere;
+}
+.activity-commentary + .activity-commentary,
+.activity-commentary + .tool-row,
+.tool-row + .activity-commentary {
+  border-top: 1px solid var(--line);
+}
+.activity-commentary > small {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.activity-commentary .assistant-body > :last-child {
+  margin-bottom: 0;
 }
 .tool-row + .tool-row {
   border-top: 1px solid #ecece8;
@@ -1413,6 +1485,10 @@ svg {
 .approval-actions button:hover {
   background: #f3f3ef;
 }
+.approval-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
 .approval-actions button.primary {
   border-color: #242422;
   background: #242422;
@@ -1422,9 +1498,36 @@ svg {
   color: #a33c37;
 }
 .approval-card.approved,
-.approval-card.denied {
+.approval-card.denied,
+.approval-card.expired {
   border-color: var(--line);
-  background: #f8f8f5;
+  background: var(--soft);
+}
+.approval-dialog {
+  width: min(620px, 100%);
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.approval-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.approval-dialog > header b {
+  font-size: 14px;
+}
+.approval-dialog .approval-card {
+  margin: 14px;
+}
+.approval-dialog .approval-card code {
+  max-height: min(40dvh, 260px);
 }
 .approval-card > small {
   color: var(--muted);
@@ -1468,6 +1571,19 @@ svg {
   box-shadow:
     0 22px 60px rgba(23, 23, 18, 0.12),
     0 2px 8px rgba(23, 23, 18, 0.04);
+}
+.composer-draft-switch {
+  margin: 0 4px 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  font-size: 11px;
+  cursor: pointer;
+}
+.composer-draft-switch:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .composer textarea {
   width: 100%;
@@ -2157,6 +2273,30 @@ svg {
   border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
+.file-interaction-notice {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  background: var(--soft);
+  color: var(--ink);
+  font-size: 11px;
+}
+.file-interaction-notice span {
+  flex: 1;
+}
+.file-interaction-notice button {
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.file-interaction-notice svg {
+  width: 14px;
+  height: 14px;
+}
 .file-scope-switch button {
   display: flex;
   align-items: center;
@@ -2261,6 +2401,20 @@ svg {
   overflow-wrap: anywhere;
   font-size: 10px;
   line-height: 1.5;
+}
+.file-choose-workspace {
+  margin: 0 2px 12px;
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+  cursor: pointer;
+}
+.file-choose-workspace:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .file-upload-target {
   display: flex;
@@ -3406,6 +3560,73 @@ svg {
   width: 13px;
   height: 13px;
 }
+.workspace-path-entry {
+  flex: none;
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px 7px;
+}
+.workspace-path-entry > label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.workspace-path-entry > div {
+  display: flex;
+  gap: 7px;
+}
+.workspace-path-entry input {
+  min-width: 0;
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+}
+.workspace-path-entry button {
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.workspace-browse-options {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 15px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.workspace-browse-options label {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+}
+.workspace-browse-options span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-error {
+  flex: none;
+  margin: 0 15px 10px;
+  color: var(--red);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.workspace-notice {
+  flex: none;
+  margin: 9px 15px 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
 .workspace-current {
   min-height: 58px;
   display: grid;
@@ -3416,7 +3637,7 @@ svg {
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fafaf8;
+  background: var(--soft);
 }
 .workspace-current > svg {
   width: 18px;
@@ -3796,7 +4017,7 @@ svg {
   .activity-group {
     border-radius: 11px;
   }
-  .activity-group > header {
+  .activity-toggle {
     height: 44px;
     padding: 0 10px;
   }
@@ -4049,7 +4270,7 @@ svg {
     background: #2b2c29;
   }
   .activity-group,
-  .activity-group > header,
+  .activity-toggle,
   .activity-list,
   .tool-row.thinking .tool-output {
     background: #20211f;
@@ -4086,9 +4307,18 @@ svg {
   .approval-card code {
     background: rgba(0, 0, 0, 0.14);
   }
+  .approval-content header span {
+    color: #c5b598;
+  }
   .approval-actions button {
     background: #262724;
     border-color: #3a3c37;
+  }
+  .approval-actions button:hover {
+    background: #363833;
+  }
+  .approval-actions button.danger {
+    color: #ef8e86;
   }
   .approval-actions button.primary,
   .send {
@@ -4260,11 +4490,11 @@ svg {
 .assistant-body ol {
   font-size: 14.5px;
 }
-.activity-group > header b,
+.activity-toggle b,
 .approval-content header b {
   font-size: 11.5px;
 }
-.activity-group > header small,
+.activity-toggle small,
 .approval-content header span {
   font-size: 9.5px;
 }
@@ -4627,6 +4857,7 @@ a:focus-visible {
 .question-card.pending {
   border-color: var(--blue);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 7%, transparent);
+  scroll-margin-top: 12px;
 }
 .question-card > header,
 .plan-card > header {
@@ -4673,12 +4904,13 @@ a:focus-visible {
 }
 .question-tabs {
   display: flex;
-  flex-wrap: wrap;
+  overflow-x: auto;
   gap: 6px;
   margin-bottom: 16px;
 }
 .question-tabs button {
   display: flex;
+  flex: none;
   gap: 4px;
   align-items: center;
   padding: 5px 9px;
@@ -4710,21 +4942,32 @@ a:focus-visible {
   margin-bottom: 12px;
   white-space: pre-wrap;
 }
+.question-text.collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.question-expand {
+  margin: -5px 0 10px;
+}
 .question-options {
   display: grid;
   gap: 8px;
 }
 .question-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  cursor: pointer;
   transition:
     border-color 0.12s,
     background 0.12s;
+}
+.question-option-control {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
 }
 .question-option:hover {
   background: var(--soft);
@@ -4739,10 +4982,20 @@ a:focus-visible {
   margin: 3px 0 0;
   flex: none;
 }
-.question-option > span {
+.question-option-control > span {
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+.option-description.collapsed,
+.option-label.collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.question-expand.option-expand {
+  margin: 5px 0 0 23px;
 }
 .question-option b {
   font-size: 12px;
@@ -4860,8 +5113,6 @@ a:focus-visible {
   line-height: 1.6;
 }
 .question-receipt {
-  display: grid;
-  gap: 12px;
   font-size: 12px;
   line-height: 1.7;
 }
@@ -4872,6 +5123,17 @@ a:focus-visible {
 .question-receipt p {
   margin: 4px 0 0;
   white-space: pre-wrap;
+}
+.question-receipt summary {
+  width: fit-content;
+  color: var(--blue);
+  cursor: pointer;
+}
+.question-receipt[open] summary {
+  margin-bottom: 12px;
+}
+.question-receipt > div + div {
+  margin-top: 12px;
 }
 .plan-card details > summary {
   cursor: pointer;
@@ -4892,9 +5154,9 @@ a:focus-visible {
   display: flex;
   align-items: center;
   gap: 9px;
-  width: 100%;
+  width: min(100%, 790px);
   padding: 11px 13px;
-  margin-bottom: 10px;
+  margin: 0 auto 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--soft);
@@ -4913,6 +5175,15 @@ a:focus-visible {
   color: var(--blue);
   font-size: 11px;
   white-space: nowrap;
+}
+.approval-banner {
+  border-color: #e5c392;
+  background: color-mix(in srgb, var(--surface) 92%, #e5a544);
+  color: var(--ink);
+}
+.approval-banner svg,
+.approval-banner b {
+  color: #9c641e;
 }
 .mode-toggle {
   display: flex;

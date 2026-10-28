@@ -113,8 +113,8 @@ export function SettingsDrawer({
               {
                 {
                   granted:
-                    "Enabled. Successful tasks send a notification while this page stays open.",
-                  default: "Allow browser notifications to be notified when a task finishes.",
+                    "Enabled. Tasks, questions and approvals send notifications while this page stays open.",
+                  default: "Allow browser notifications for task updates and requests.",
                   denied:
                     "Blocked. Allow notifications in your browser’s site settings to enable them.",
                   insecure:
@@ -131,6 +131,11 @@ export function SettingsDrawer({
                 onClick={() => void notifications.requestPermission()}
               >
                 {notifications.requesting ? "Waiting for permission…" : "Enable notifications"}
+              </button>
+            )}
+            {notifications.status === "granted" && (
+              <button className="notification-enable" onClick={notifications.sendTest}>
+                Send test notification
               </button>
             )}
           </section>

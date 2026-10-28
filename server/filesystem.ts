@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import os from "node:os";
 
 const hidden = new Set([".git", "node_modules", "dist", "build", ".next", "coverage"]);
 const MAX_TEXT_FILE_SIZE = 10 * 1024 * 1024;
@@ -103,12 +104,14 @@ const imageMime = new Map([
 export class WorkspaceFs {
   private root = "";
   private base = "";
+  private start = "";
   private selected = false;
   constructor(
     private requestedRoot: string,
     private requestedBase = requestedRoot,
     selected = false,
     private sessionFiles = false,
+    private strictBase = false,
   ) {
     this.selected = selected;
   }
@@ -127,13 +130,26 @@ export class WorkspaceFs {
     this.root = await fs.realpath(this.requestedRoot);
     if (!(await fs.stat(this.root)).isDirectory()) throw new Error("Workspace must be a directory");
     this.base = await fs.realpath(this.requestedBase);
-    if (!this.inside(this.base, this.root)) this.base = path.dirname(this.root);
+    if (!this.inside(this.base, this.root)) {
+      if (this.strictBase) throw new Error("Workspace is outside the configured browsing root");
+      this.base = path.dirname(this.root);
+    }
+    this.start = this.base;
+    try {
+      const home = await fs.realpath(os.homedir());
+      if (this.inside(this.base, home)) this.start = home;
+    } catch {
+      /* Use the browsing root when the home directory is unavailable. */
+    }
   }
   get path() {
     return this.root;
   }
   get basePath() {
     return this.base;
+  }
+  get browseStart() {
+    return this.start;
   }
   get isSelected() {
     return this.selected;
@@ -151,7 +167,10 @@ export class WorkspaceFs {
 
   private inside(parent: string, candidate: string) {
     const relative = path.relative(parent, candidate);
-    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+    return (
+      relative === "" ||
+      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    );
   }
 
   private async safeFrom(parent: string, relative = "", existing = true) {
@@ -168,19 +187,46 @@ export class WorkspaceFs {
     return this.safeFrom(this.root, relative, existing);
   }
 
-  async listWorkspaces(relative = "") {
+  async resolveWorkspace(input: string) {
+    const value = input;
+    if (!value.trim()) throw new Error("Enter a folder path");
+    const expanded =
+      value === "~"
+        ? os.homedir()
+        : /^~[\\/]/.test(value)
+          ? path.join(os.homedir(), value.slice(2))
+          : value;
+    const resolved = await fs.realpath(
+      path.isAbsolute(expanded) ? expanded : path.resolve(this.base, expanded),
+    );
+    if (!this.inside(this.base, resolved)) throw new Error("Folder is outside the browsing root");
+    if (!(await fs.stat(resolved)).isDirectory()) throw new Error("Choose a directory");
+    return { path: path.relative(this.base, resolved).replaceAll("\\", "/"), absolute: resolved };
+  }
+
+  async listWorkspaces(relative = "", showHidden = false) {
     const dir = await this.safeFrom(this.base, relative);
     const entries = await fs.readdir(dir, { withFileTypes: true });
-    return entries
-      .filter(
-        (entry) => entry.isDirectory() && !hidden.has(entry.name) && !entry.name.startsWith("."),
-      )
-      .map((entry) => ({
-        name: entry.name,
-        path: path.posix.join(relative.replaceAll("\\", "/"), entry.name),
-        type: "directory" as const,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    const folders = [];
+    for (const entry of entries) {
+      if (!showHidden && (hidden.has(entry.name) || entry.name.startsWith("."))) continue;
+      let directory = entry.isDirectory();
+      if (entry.isSymbolicLink()) {
+        try {
+          const target = await fs.realpath(path.join(dir, entry.name));
+          directory = this.inside(this.base, target) && (await fs.stat(target)).isDirectory();
+        } catch {
+          directory = false;
+        }
+      }
+      if (directory)
+        folders.push({
+          name: entry.name,
+          path: path.posix.join(relative.replaceAll("\\", "/"), entry.name),
+          type: "directory" as const,
+        });
+    }
+    return folders.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async select(relative = "") {

@@ -1,4 +1,5 @@
 import { ShieldCheck, Terminal } from "lucide-react";
+import { useRef, useState } from "react";
 import type { ApprovalDecision, UiItem } from "../types";
 
 const decisionKey = (decision: ApprovalDecision) =>
@@ -8,8 +9,25 @@ export function ApprovalCard({
   respond,
 }: {
   item: Extract<UiItem, { type: "approval" }>;
-  respond: (decision: ApprovalDecision) => void;
+  respond?: (decision: ApprovalDecision) => Promise<void>;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const submitting = useRef(false);
+  const submit = async (decision: ApprovalDecision) => {
+    if (!respond || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await respond(decision);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not submit the approval.");
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  };
   const label: Record<string, string> = {
     accept: "Allow once",
     acceptForSession: "Allow this session",
@@ -19,7 +37,7 @@ export function ApprovalCard({
     cancel: "Cancel",
   };
   return (
-    <section className={`approval-card ${item.status}`}>
+    <section id={`interaction-${item.id}`} className={`approval-card ${item.status}`}>
       <span className="approval-icon">
         <ShieldCheck />
       </span>
@@ -50,7 +68,8 @@ export function ApprovalCard({
                         ? "danger"
                         : ""
                   }
-                  onClick={() => respond(decision)}
+                  disabled={busy || !respond}
+                  onClick={() => void submit(decision)}
                 >
                   {label[key] || key}
                 </button>
@@ -58,7 +77,18 @@ export function ApprovalCard({
             })}
           </div>
         ) : (
-          <small>{item.status === "approved" ? "Approved" : "Denied"}</small>
+          <small>
+            {item.status === "approved"
+              ? "Approved"
+              : item.status === "denied"
+                ? "Denied"
+                : "No longer pending"}
+          </small>
+        )}
+        {error && (
+          <p className="interaction-error" role="alert">
+            {error}
+          </p>
         )}
       </div>
     </section>

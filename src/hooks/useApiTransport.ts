@@ -109,6 +109,7 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
             nextCursor: data.nextCursor || null,
             archived: false,
           });
+          deliver({ type: "interactions.snapshot", interactions: data.pendingInteractions || [] });
           deliver({ type: "bootstrap.ready" });
           if (resync) {
             resync = false;
@@ -177,7 +178,9 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
           : more
             ? 0
             : document.hidden
-              ? 15_000
+              ? runningThreads.current.size
+                ? 5_000
+                : 15_000
               : runningThreads.current.size
                 ? 650
                 : 2500,

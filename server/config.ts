@@ -4,6 +4,7 @@ import path from "node:path";
 export const codexHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"));
 
 const defaultWorkspace = process.env.CODEX_WEB_DEFAULT_WORKSPACE;
+const browseRoot = process.env.CODEX_WEB_BROWSE_ROOT;
 
 function flag(name: string) {
   const index = process.argv.indexOf(name);
@@ -28,7 +29,8 @@ export const config = {
   port: Number(process.env.CODEX_WEB_PORT || flag("--port") || 8765),
   basePath: normalizeBasePath(process.env.CODEX_WEB_BASE_PATH || flag("--base-path") || "/"),
   workspace: defaultWorkspace?.trim() ? defaultWorkspace : process.cwd(),
-  workspaceBase: os.homedir(),
+  workspaceBase: browseRoot?.trim() ? browseRoot : os.homedir(),
+  browseRootExplicit: Boolean(browseRoot?.trim()),
   workspaceExplicit: Boolean(defaultWorkspace?.trim()),
   auth: basicAuth(),
   dev: process.argv.includes("--dev"),

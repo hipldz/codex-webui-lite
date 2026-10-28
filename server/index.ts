@@ -16,13 +16,19 @@ import { acceptedEncodings, actionRequestError, fileHeaders } from "./http-polic
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 await ensureWebInstructions();
-let workspaceFs = new WorkspaceFs(config.workspace, config.workspaceBase, config.workspaceExplicit);
+let workspaceFs = new WorkspaceFs(
+  config.workspaceExplicit ? config.workspace : config.workspaceBase,
+  config.workspaceBase,
+  config.workspaceExplicit,
+  false,
+  config.browseRootExplicit,
+);
 try {
   await workspaceFs.init();
 } catch (error) {
   if (!config.workspaceExplicit) throw error;
   console.warn(`Ignoring invalid CODEX_WEB_DEFAULT_WORKSPACE (${config.workspace}):`, error);
-  workspaceFs = new WorkspaceFs(process.cwd(), config.workspaceBase);
+  workspaceFs = new WorkspaceFs(config.workspaceBase, config.workspaceBase);
   await workspaceFs.init();
 }
 const attachmentStore = new AttachmentStore();
@@ -32,6 +38,7 @@ const events = new EventHub();
 const meta = () => ({
   workspace: workspaceFs.path,
   workspaceBase: workspaceFs.basePath,
+  workspaceStart: workspaceFs.browseStart,
   workspaceSelected: workspaceFs.isSelected,
   sessionFilesRoot: attachmentStore.rootPath,
   basePath: config.basePath,
@@ -225,7 +232,7 @@ const server = http.createServer(async (req, res) => {
       const scope = await controller.filesFor({
         scope: url.searchParams.get("scope") || undefined,
         threadId: url.searchParams.get("threadId") || undefined,
-        workspace: url.searchParams.get("workspace") || undefined,
+        workspaceToken: url.searchParams.get("workspaceToken") || undefined,
       });
       const download = await scope.download(relative);
       res.writeHead(200, fileHeaders(download, localPath.endsWith("/raw")));

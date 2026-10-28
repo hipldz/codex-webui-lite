@@ -14,8 +14,10 @@ async def check_page(browser, viewport, name):
     page.on("requestfailed", lambda r: failed.append(f"{r.url}: {r.failure}"))
     response = await page.goto(BASE + "?demo=1", wait_until="networkidle")
     assert response and response.ok, f"Page failed: {response.status if response else 'none'}"
-    await page.locator(".tool-row").first.wait_for()
     assert await page.get_by_role("button", name="Allow + update exec policy").count() == 1
+    await page.get_by_role("button", name="Close approval request").click()
+    await page.locator(".activity-toggle").first.click()
+    await page.locator(".tool-row").first.wait_for()
     assert await page.locator(".tool-row.file_change .tool-summary").first.get_attribute("aria-expanded") == "false"
     overflow = await page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth")
     assert not overflow, f"Horizontal overflow at {viewport}"

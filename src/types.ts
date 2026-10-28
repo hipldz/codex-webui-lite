@@ -29,7 +29,13 @@ export type UiItem = TimedItem &
         delivery?: "sending" | "queued" | "sent" | "failed";
         failure?: string;
       }
-    | { type: "assistant_message"; id: string; text: string; streaming: boolean }
+    | {
+        type: "assistant_message";
+        id: string;
+        text: string;
+        streaming: boolean;
+        phase?: "commentary" | "final_answer";
+      }
     | { type: "generated_image"; id: string; src: string; alt: string }
     | { type: "thinking"; id: string; text: string; status: "running" | "done" }
     | {
@@ -53,7 +59,7 @@ export type UiItem = TimedItem &
         id: string;
         requestId: number | string;
         description: string;
-        status: "pending" | "approved" | "denied";
+        status: "pending" | "approved" | "denied" | "expired";
         decisions: ApprovalDecision[];
         approvalKind: "command" | "file";
       }
@@ -84,6 +90,11 @@ export type Thread = {
 };
 export type FileEntry = { name: string; path: string; type: "directory" | "file" };
 export type FileScope = "workspace" | "thread";
+export type PendingInteraction = {
+  threadId: string;
+  id: string;
+  type: "approval" | "question";
+};
 
 export type ModelOption = {
   id: string;

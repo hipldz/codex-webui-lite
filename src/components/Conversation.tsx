@@ -2,6 +2,7 @@ import {
   Activity,
   Check,
   CheckCircle2,
+  ChevronRight,
   ClipboardList,
   Copy,
   Download,
@@ -15,7 +16,7 @@ import {
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ApprovalDecision, FileScope, QuestionAnswers, UiItem } from "../types";
+import type { FileScope, QuestionAnswers, UiItem } from "../types";
 import { visibleUserText } from "../user-message";
 import {
   markdownUrlTransform,
@@ -43,25 +44,60 @@ type ToolItem = Exclude<
       | "status";
   }
 >;
-type Segment = { type: "item"; item: UiItem } | { type: "activity"; id: string; items: ToolItem[] };
+type AssistantMessage = Extract<UiItem, { type: "assistant_message" }>;
+type ActivityItem = ToolItem | AssistantMessage;
+type Segment =
+  | { type: "item"; item: UiItem }
+  | { type: "activity"; id: string; turnId?: string; items: ActivityItem[] };
+
+const isToolItem = (item: UiItem): item is ToolItem =>
+  item.type === "thinking" ||
+  item.type === "command" ||
+  item.type === "file_read" ||
+  item.type === "file_change";
 
 function groupItems(items: UiItem[]): Segment[] {
+  // Older histories may omit the message phase. Only infer progress when a
+  // tool call and a later assistant response occur in the same turn.
+  const inferredProgress = new Set<number>();
+  const later = new Map<string, { answer: boolean; tool: boolean }>();
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index];
+    if (!item.turnId) continue;
+    if (["user_message", "question", "approval", "plan", "error"].includes(item.type)) {
+      later.delete(item.turnId);
+      continue;
+    }
+    const state = later.get(item.turnId) || { answer: false, tool: false };
+    if (item.type === "assistant_message") {
+      const inferred = !item.phase && !item.streaming && state.answer && state.tool;
+      if (inferred) inferredProgress.add(index);
+      else if (item.phase !== "commentary" && (item.text || item.streaming)) state.answer = true;
+    } else if (isToolItem(item) && state.answer) state.tool = true;
+    later.set(item.turnId, state);
+  }
   const result: Segment[] = [];
-  for (const item of items) {
-    const isTool = ![
-      "user_message",
-      "assistant_message",
-      "generated_image",
-      "approval",
-      "question",
-      "plan",
-      "error",
-      "status",
-    ].includes(item.type);
+  for (const [index, item] of items.entries()) {
+    if (item.type === "assistant_message" && !item.text && !item.streaming) continue;
+    const activity =
+      isToolItem(item) ||
+      (item.type === "assistant_message" &&
+        (item.phase === "commentary" || inferredProgress.has(index)));
     const last = result.at(-1);
-    if (isTool && last?.type === "activity") last.items.push(item as ToolItem);
-    else if (isTool)
-      result.push({ type: "activity", id: `activity-${item.id}`, items: [item as ToolItem] });
+    if (
+      activity &&
+      last?.type === "activity" &&
+      (!last.turnId || !item.turnId || last.turnId === item.turnId)
+    ) {
+      last.items.push(item as ActivityItem);
+      last.turnId ||= item.turnId;
+    } else if (activity)
+      result.push({
+        type: "activity",
+        id: `activity-${item.id}`,
+        turnId: item.turnId,
+        items: [item as ActivityItem],
+      });
     else result.push({ type: "item", item });
   }
   return result;
@@ -86,46 +122,93 @@ function StatusLine({ item }: { item: Extract<UiItem, { type: "status" }> }) {
   );
 }
 
+type ActivityGroupProps = {
+  items: ActivityItem[];
+  workspace: string;
+  sessionDirectory: string;
+  inheritedDirectories: string[];
+  threadId: string;
+  prefix: string;
+  fileScope: string;
+  openFile: (path: string, scope?: FileScope) => void;
+  setPreviewImage: (image: { src: string; alt: string }) => void;
+};
+
 const ActivityGroup = memo(
-  function ActivityGroup({ items }: { items: ToolItem[] }) {
+  function ActivityGroup({ items, ...context }: ActivityGroupProps) {
+    const [open, setOpen] = useState(false);
     const active = items.some(
-      (item) => (item.type === "thinking" || item.type === "command") && item.status === "running",
+      (item) =>
+        ((item.type === "thinking" || item.type === "command") && item.status === "running") ||
+        (item.type === "assistant_message" && item.streaming),
     );
-    const count = (type: ToolItem["type"]) => items.filter((item) => item.type === type).length;
+    const count = (type: ActivityItem["type"]) => items.filter((item) => item.type === type).length;
+    const failed = items.filter(
+      (item) => item.type === "command" && item.status === "error",
+    ).length;
     const summary =
       [
         [count("file_change"), "file"],
         [count("file_read"), "file read"],
         [count("command"), "command"],
         [count("thinking"), "reasoning step"],
+        [count("assistant_message"), "progress update"],
       ]
         .filter(([total]) => total)
         .map(([total, label]) => `${total} ${label}${total === 1 ? "" : "s"}`)
         .join(", ") || `${items.length} activities`;
     return (
       <section className={`activity-group ${active ? "running" : ""}`}>
-        <header>
+        <button
+          type="button"
+          className="activity-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
           <span className="activity-icon">{active ? <LoaderCircle /> : <Activity />}</span>
-          <div>
-            <b>{active ? "Working" : summary}</b>
-            <small>
-              {active
-                ? "Codex is reasoning and using tools"
-                : "Turn activity · open any row for details"}
+          <span className="activity-label">
+            <b>{active ? "Working" : "Work details"}</b>
+            <small title={active ? "Codex is reasoning and using tools" : summary}>
+              {failed > 0 && <em className="activity-error">{failed} failed · </em>}
+              {active ? "Codex is reasoning and using tools" : summary}
             </small>
+          </span>
+          <ChevronRight className={`activity-chevron ${open ? "open" : ""}`} />
+        </button>
+        {open && (
+          <div className="activity-list">
+            {items.map((item) =>
+              item.type === "assistant_message" ? (
+                <div className="activity-commentary" key={item.id}>
+                  <small>Progress update</small>
+                  <div className="assistant-body">
+                    <MarkdownBody text={item.text} {...context} />
+                    {item.streaming && <span className="stream-cursor" />}
+                  </div>
+                </div>
+              ) : (
+                <ToolCard item={item} key={item.id} />
+              ),
+            )}
           </div>
-        </header>
-        <div className="activity-list">
-          {items.map((item) => (
-            <ToolCard item={item} key={item.id} />
-          ))}
-        </div>
+        )}
       </section>
     );
   },
   (before, after) =>
     before.items.length === after.items.length &&
-    before.items.every((item, index) => item === after.items[index]),
+    before.items.every((item, index) => item === after.items[index]) &&
+    before.workspace === after.workspace &&
+    before.sessionDirectory === after.sessionDirectory &&
+    before.threadId === after.threadId &&
+    before.prefix === after.prefix &&
+    before.fileScope === after.fileScope &&
+    before.openFile === after.openFile &&
+    before.setPreviewImage === after.setPreviewImage &&
+    before.inheritedDirectories.length === after.inheritedDirectories.length &&
+    before.inheritedDirectories.every(
+      (directory, index) => directory === after.inheritedDirectories[index],
+    ),
 );
 
 function MessageTime({ value }: { value?: number }) {
@@ -142,6 +225,26 @@ function MessageTime({ value }: { value?: number }) {
     <time className="message-time" dateTime={date.toISOString()} title={date.toLocaleString()}>
       {label}
     </time>
+  );
+}
+
+function UserMessageText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = text.length > 480 || text.split("\n").length > 6;
+  return (
+    <>
+      <p className={long && !expanded ? "user-text collapsed" : "user-text"}>{text}</p>
+      {long && (
+        <button
+          type="button"
+          className="user-text-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </>
   );
 }
 
@@ -306,6 +409,7 @@ export function Conversation({
   retry,
   scrollRequest,
   workspace,
+  workspaceToken,
   sessionDirectory,
   inheritedDirectories,
   basePath,
@@ -314,7 +418,6 @@ export function Conversation({
   loadEarlier,
   openFile,
   branch,
-  respond,
   answer,
   implementPlan,
   revisePlan,
@@ -327,6 +430,7 @@ export function Conversation({
   retry?: (id: string) => void;
   scrollRequest: number;
   workspace: string;
+  workspaceToken: string;
   sessionDirectory: string;
   inheritedDirectories: string[];
   basePath: string;
@@ -335,7 +439,6 @@ export function Conversation({
   loadEarlier: () => void;
   openFile: (path: string, scope?: FileScope) => void;
   branch: (turnId: string) => void;
-  respond: (item: Extract<UiItem, { type: "approval" }>, decision: ApprovalDecision) => void;
   answer: (
     item: Extract<UiItem, { type: "question" }>,
     answers: QuestionAnswers,
@@ -392,7 +495,7 @@ export function Conversation({
     (item) => item.type === "question" && item.status === "pending" && item.blocking,
   );
   const prefix = basePath === "/" ? "" : basePath;
-  const fileScope = `&${new URLSearchParams(threadId ? { threadId } : { workspace })}`;
+  const fileScope = `&${new URLSearchParams(threadId ? { threadId } : { workspaceToken })}`;
   const resolvedImage = (src: string) => {
     if (/^(https?:|data:|blob:)/i.test(src)) return src;
     const normalized = normalizeFilePath(src);
@@ -473,7 +576,18 @@ export function Conversation({
         )}
         {segments.map((segment) =>
           segment.type === "activity" ? (
-            <ActivityGroup items={segment.items} key={segment.id} />
+            <ActivityGroup
+              items={segment.items}
+              key={segment.id}
+              workspace={workspace}
+              sessionDirectory={sessionDirectory}
+              inheritedDirectories={inheritedDirectories}
+              threadId={threadId}
+              prefix={prefix}
+              fileScope={fileScope}
+              openFile={openFile}
+              setPreviewImage={setPreviewImage}
+            />
           ) : segment.item.type === "user_message" ? (
             <article
               className="message user"
@@ -546,7 +660,7 @@ export function Conversation({
                     })}
                   </div>
                 ) : null}
-                {segment.item.text && <p>{segment.item.text}</p>}
+                {segment.item.text && <UserMessageText text={segment.item.text} />}
                 <MessageTime value={segment.item.timestamp} />
                 {segment.item.delivery === "queued" && (
                   <small className="delivery-state">Waiting in queue</small>
@@ -648,13 +762,9 @@ export function Conversation({
               </div>
             </article>
           ) : segment.item.type === "approval" ? (
-            <ApprovalCard
-              key={segment.item.id}
-              item={segment.item}
-              respond={(decision) =>
-                respond(segment.item as Extract<UiItem, { type: "approval" }>, decision)
-              }
-            />
+            segment.item.status === "pending" ? null : (
+              <ApprovalCard key={segment.item.id} item={segment.item} />
+            )
           ) : segment.item.type === "question" ? (
             <QuestionCard
               key={`${threadId}:${segment.item.id}`}

@@ -9,6 +9,7 @@ import {
   X,
 } from "lucide-react";
 import { Composer, type ComposerAttachment, type PermissionPreset } from "./components/Composer";
+import { ApprovalDialog } from "./components/ApprovalDialog";
 import { Conversation } from "./components/Conversation";
 import { DiffDrawer } from "./components/DiffDrawer";
 import { FileDrawer } from "./components/FileDrawer";
@@ -26,9 +27,11 @@ import { useTaskNotifications } from "./hooks/useTaskNotifications";
 import { threadIsRunning } from "./thread-status";
 import type {
   CollaborationMode,
+  ApprovalDecision,
   FileEntry,
   FileScope,
   ModelOption,
+  PendingInteraction,
   QuestionAnswers,
   Thread,
   UiItem,
@@ -46,9 +49,11 @@ const initialFile = new URLSearchParams(location.search).get("file") || "";
 const initialFileScope: FileScope =
   new URLSearchParams(location.search).get("scope") === "thread" ? "thread" : "workspace";
 const initialSession = new URLSearchParams(location.search).get("session") || "";
+const initialInteraction = new URLSearchParams(location.search).get("interaction") || "";
 const browserBasePath = location.pathname.replace(/\/$/, "") || "/";
 const updateSessionUrl = (id?: string) => {
   const url = new URL(location.href);
+  if (url.searchParams.get("session") !== (id || null)) url.searchParams.delete("interaction");
   if (id) url.searchParams.set("session", id);
   else url.searchParams.delete("session");
   history.replaceState(null, "", url);
@@ -93,6 +98,7 @@ const mergeItems = (current: UiItem[], incoming: UiItem[]) => {
       item.streaming
     )
       next[index] = {
+        ...next[index],
         ...item,
         text: item.delta ? (next[index].text + item.text).slice(-262144) : item.text,
       };
@@ -194,7 +200,7 @@ export function App() {
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
   const notifications = useTaskNotifications(demo);
-  const { notifyTaskComplete } = notifications;
+  const { notifyTaskComplete, notifyInteraction } = notifications;
   const [notificationPromptDismissed, setNotificationPromptDismissed] = useState(false);
   const [boot, setBoot] = useState({
     active: !demo,
@@ -210,6 +216,30 @@ export function App() {
   const activeRef = useRef(active);
   activeRef.current = active;
   const [items, setItems] = useState<UiItem[]>(demo ? initialDemoItems : []);
+  const [pendingInteractions, setPendingInteractions] = useState<PendingInteraction[]>([]);
+  const pendingInteractionsRef = useRef<PendingInteraction[]>([]);
+  const commitInteractions = useCallback((value: PendingInteraction[]) => {
+    pendingInteractionsRef.current = value;
+    setPendingInteractions(value);
+  }, []);
+  const previousNotificationStatus = useRef(notifications.status);
+  const [reviewingApproval, setReviewingApproval] = useState<{
+    threadId: string;
+    id: string;
+  } | null>(null);
+  const seenApprovals = useRef(new Set<string>());
+  const interactionToOpen = useRef(
+    initialSession && initialInteraction
+      ? { threadId: initialSession, id: initialInteraction }
+      : null,
+  );
+  const preserveInitialFile = useRef(Boolean(initialSession && initialFile));
+  const [notificationTarget, setNotificationTarget] = useState<{
+    threadId: string;
+    interactionId: string;
+  } | null>(null);
+  const [notificationRetry, setNotificationRetry] = useState(0);
+  const closeApproval = useCallback(() => setReviewingApproval(null), []);
   const [messageHistory, setMessageHistory] = useState<{
     cursor: string | null;
     hasEarlier: boolean;
@@ -243,6 +273,7 @@ export function App() {
   const lastAttempt = useRef<{ signature: string; id: string } | null>(null);
   const [restoreDraft, setRestoreDraft] = useState<{
     id: string;
+    threadId: string;
     text: string;
     attachments: ComposerAttachment[];
   } | null>(null);
@@ -254,12 +285,15 @@ export function App() {
   const [settings, setSettings] = useState(false);
   const [changes, setChanges] = useState(false);
   const [workspacePicker, setWorkspacePicker] = useState(false);
+  const [workspaceNotice, setWorkspaceNotice] = useState("");
   const [fileScope, setFileScope] = useState<FileScope>(
     initialFile ? initialFileScope : "workspace",
   );
   const [meta, setMeta] = useState({
     workspace: demo ? "/home/demo/project" : "",
     workspaceBase: demo ? "/home/demo" : "",
+    workspaceStart: demo ? "/home/demo" : "",
+    workspaceToken: "",
     workspaceSelected: demo,
     sessionFileThreads: [] as string[],
     sessionFilesRoot: demo ? "/home/demo/.codex/web-ui" : "",
@@ -361,6 +395,43 @@ export function App() {
     delay ? window.setTimeout(clear, delay) : clear();
   }, []);
 
+  const notifyPendingInteraction = useCallback(
+    (item: PendingInteraction) => {
+      queueMicrotask(() => {
+        if (
+          !pendingInteractionsRef.current.some(
+            (entry) =>
+              entry.threadId === item.threadId && entry.id === item.id && entry.type === item.type,
+          )
+        )
+          return;
+        const thread = threadsRef.current.find((entry) => entry.id === item.threadId);
+        notifyInteraction(item.threadId, item.id, item.type, thread?.name || thread?.preview || "");
+      });
+    },
+    [notifyInteraction],
+  );
+
+  const updateInteractions = useCallback(
+    (threadId: string, incoming: UiItem[]) => {
+      const interactions = incoming.filter(
+        (item): item is Extract<UiItem, { type: "question" | "approval" }> =>
+          item.type === "question" || item.type === "approval",
+      );
+      if (!interactions.length) return;
+      let next = pendingInteractionsRef.current;
+      for (const item of interactions) {
+        next = next.filter((entry) => entry.threadId !== threadId || entry.id !== item.id);
+        if (item.status === "pending") next = [...next, { threadId, id: item.id, type: item.type }];
+      }
+      commitInteractions(next);
+      for (const item of interactions)
+        if (item.status === "pending")
+          notifyPendingInteraction({ threadId, id: item.id, type: item.type });
+    },
+    [commitInteractions, notifyPendingInteraction],
+  );
+
   const onMessage = useCallback(
     (message: any) => {
       if (message.requestId && pending.current.has(message.requestId)) {
@@ -368,6 +439,12 @@ export function App() {
         pending.current.delete(message.requestId);
         return;
       }
+      if (
+        message.threadId &&
+        Array.isArray(message.items) &&
+        ["items", "event"].includes(message.type)
+      )
+        updateInteractions(message.threadId, message.items);
       if (message.type === "events.reset") {
         if (activeRef.current) {
           beginSessionLoading(activeRef.current.id, "Reconnecting session");
@@ -375,16 +452,30 @@ export function App() {
         }
         return;
       }
-      if (message.type === "status") {
+      if (message.type === "interactions.snapshot") {
+        commitInteractions(message.interactions || []);
+      } else if (message.type === "status") {
         const previous = metaRef.current.codexStatus;
         setMeta((old) => ({
           ...old,
           ...(message.bootstrap && !old.workspaceSelected && !activeRef.current ? message : {}),
+          ...(message.bootstrap &&
+          !activeRef.current &&
+          old.workspaceSelected &&
+          old.workspace === message.workspace &&
+          message.workspaceToken
+            ? {
+                workspaceToken: message.workspaceToken,
+                workspaceBase: message.workspaceBase,
+                workspaceStart: message.workspaceStart,
+              }
+            : {}),
           codexStatus: message.codexStatus,
           codexVersion: message.codexVersion || old.codexVersion,
           runtime: message.runtime,
         }));
         if (["stopped", "error"].includes(message.codexStatus)) {
+          commitInteractions([]);
           setRunning(false);
           setQueued(false);
           setTurnId(undefined);
@@ -395,13 +486,15 @@ export function App() {
                 ? { ...item, streaming: false }
                 : item.type === "question" && item.status === "pending"
                   ? { ...item, status: "expired" }
-                  : item.type === "plan"
-                    ? { ...item, streaming: false, ready: false }
-                    : item.type === "thinking"
-                      ? { ...item, status: "done" }
-                      : item.type === "command" && item.status === "running"
-                        ? { ...item, status: "error" }
-                        : item,
+                  : item.type === "approval" && item.status === "pending"
+                    ? { ...item, status: "expired" }
+                    : item.type === "plan"
+                      ? { ...item, streaming: false, ready: false }
+                      : item.type === "thinking"
+                        ? { ...item, status: "done" }
+                        : item.type === "command" && item.status === "running"
+                          ? { ...item, status: "error" }
+                          : item,
             ),
           );
         }
@@ -483,15 +576,45 @@ export function App() {
           setConfigPermissionLabel(message.defaultPermissionLabel || "Codex default");
         }
       } else if (message.type === "thread.active") {
+        if (message.pendingInteractions) {
+          const snapshot: PendingInteraction[] = message.pendingInteractions;
+          const newlyPending = snapshot.filter(
+            (item) =>
+              !pendingInteractionsRef.current.some(
+                (old) => old.threadId === item.threadId && old.id === item.id,
+              ),
+          );
+          commitInteractions(snapshot);
+          for (const item of newlyPending) notifyPendingInteraction(item);
+        }
         const thread = mergeThreadSummary(
           activeRef.current?.id === message.thread.id ? activeRef.current : undefined,
           message.thread,
         );
-        const nextItems = message.items || [];
+        const nextItems = message.workspace?.error
+          ? [
+              {
+                type: "error",
+                id: `workspace-error:${thread.id}`,
+                message: `This session's workspace is unavailable: ${message.workspace.error}. Check that the folder exists and is within CODEX_WEB_BROWSE_ROOT.`,
+              },
+              ...(message.items || []),
+            ]
+          : message.items || [];
         setMode(message.collaborationMode === "plan" ? "plan" : "default");
-        if (activeRef.current && activeRef.current.id !== thread.id) {
+        const initialFileForThread = preserveInitialFile.current && thread.id === initialSession;
+        preserveInitialFile.current = false;
+        if (
+          activeRef.current?.id !== thread.id &&
+          message.action !== "thread.create" &&
+          !initialFileForThread
+        ) {
           setFiles(false);
           setFileTarget("");
+          const fileUrl = new URL(location.href);
+          fileUrl.searchParams.delete("file");
+          fileUrl.searchParams.delete("scope");
+          history.replaceState(null, "", fileUrl);
         }
         activeRef.current = thread;
         finishSessionLoading();
@@ -557,9 +680,20 @@ export function App() {
           old?.id === message.thread.id ? mergeThreadSummary(old, message.thread) : old,
         );
       } else if (message.type === "thread.mutated") {
+        if (message.action === "delete")
+          commitInteractions(
+            pendingInteractionsRef.current.filter((entry) => entry.threadId !== message.threadId),
+          );
         setThreads((old) => old.filter((entry) => entry.id !== message.threadId));
         setArchivedThreads((old) => old.filter((entry) => entry.id !== message.threadId));
         if (activeRef.current?.id === message.threadId && message.action !== "unarchive") {
+          setFiles(false);
+          setFileTarget("");
+          setFileScope("workspace");
+          const fileUrl = new URL(location.href);
+          fileUrl.searchParams.delete("file");
+          fileUrl.searchParams.delete("scope");
+          history.replaceState(null, "", fileUrl);
           activeRef.current = null;
           setRunning(false);
           setQueued(false);
@@ -747,6 +881,7 @@ export function App() {
           setConfigPermissionLabel(message.defaultPermissionLabel || "Codex default");
         }
         const selected = message.workspaceSelected ?? true;
+        setWorkspaceNotice("");
         setMeta((old) => ({
           ...old,
           ...message,
@@ -754,6 +889,13 @@ export function App() {
           sessionFileThreads: [],
         }));
         setWorkspacePicker(!selected);
+        setFiles(false);
+        setFileTarget("");
+        setFileScope("workspace");
+        const fileUrl = new URL(location.href);
+        fileUrl.searchParams.delete("file");
+        fileUrl.searchParams.delete("scope");
+        history.replaceState(null, "", fileUrl);
         finishSessionLoading("new");
         activeRef.current = null;
         setActive(null);
@@ -769,11 +911,21 @@ export function App() {
       } else if (message.type === "system.usage") setResources(message.usage);
       else if (message.type === "account.usage") setAccount(message);
       else if (message.type === "error") {
-        if (message.action === "input.respond") return;
+        if (["input.respond", "approval.respond", "workspace.select"].includes(message.action))
+          return;
         finishSessionLoading();
         if (message.action === "runtime.restart" || message.action === "runtime.start")
           setBoot({ active: false, stage: "error", error: message.message });
         if (["turn.send", "thread.create"].includes(message.action)) {
+          if (
+            message.action === "thread.create" &&
+            /workspace selection expired|choose a workspace first/i.test(message.message || "")
+          ) {
+            setWorkspaceNotice(
+              "The workspace selection expired after the server restarted. Choose the folder again to continue.",
+            );
+            setWorkspacePicker(true);
+          }
           setRunning(false);
           setQueued(false);
           if (!message.transportError) lastAttempt.current = null;
@@ -792,11 +944,27 @@ export function App() {
         ]);
       }
     },
-    [finishSessionLoading, beginSessionLoading, notifyTaskComplete],
+    [
+      finishSessionLoading,
+      beginSessionLoading,
+      notifyTaskComplete,
+      notifyPendingInteraction,
+      updateInteractions,
+      commitInteractions,
+    ],
   );
   const { connected, send } = useApiTransport(onMessage, demo);
   const sendRef = useRef(send);
   sendRef.current = send;
+  useEffect(() => {
+    const previous = previousNotificationStatus.current;
+    previousNotificationStatus.current = notifications.status;
+    if (previous === "granted" || notifications.status !== "granted") return;
+    for (const item of pendingInteractions) {
+      const thread = threadsRef.current.find((entry) => entry.id === item.threadId);
+      notifyInteraction(item.threadId, item.id, item.type, thread?.name || thread?.preview || "");
+    }
+  }, [notifications.status, pendingInteractions, notifyInteraction]);
   useEffect(() => {
     if (demo || !connected || meta.codexStatus !== "ready" || !sessionToResume.current) return;
     const threadId = sessionToResume.current;
@@ -831,16 +999,25 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [compaction]);
   useEffect(() => {
+    if (preserveInitialFile.current && active?.id !== initialSession) return;
     if (fileTarget && (fileScope === "thread" ? Boolean(active) : meta.workspaceSelected))
       setFiles(true);
   }, [fileTarget, meta.workspaceSelected, fileScope, active]);
 
+  const mayChangeContext = () =>
+    !files ||
+    window.dispatchEvent(new Event("codex:before-workspace-change", { cancelable: true }));
   const create = () => {
     if (submitting.current || sessionLoadingRef.current) return;
+    if (!mayChangeContext()) return;
     if (!demo && !beginSessionLoading("new", "Preparing new session")) return;
     setFiles(false);
     setFileTarget("");
     setFileScope("workspace");
+    const fileUrl = new URL(location.href);
+    fileUrl.searchParams.delete("file");
+    fileUrl.searchParams.delete("scope");
+    history.replaceState(null, "", fileUrl);
     activeRef.current = null;
     setQueued(false);
     setMode("default");
@@ -869,13 +1046,23 @@ export function App() {
         ...old,
         workspace: "",
         workspaceSelected: false,
+        workspaceToken: "",
         sessionFileThreads: [],
       }));
       void send({ type: "workspace.reset" });
     }
   };
   const select = (id: string) => {
+    if (submitting.current || sessionLoadingRef.current || id === activeRef.current?.id) return;
+    if (!mayChangeContext()) return;
     if (demo) {
+      setFiles(false);
+      setFileTarget("");
+      setFileScope("workspace");
+      const fileUrl = new URL(location.href);
+      fileUrl.searchParams.delete("file");
+      fileUrl.searchParams.delete("scope");
+      history.replaceState(null, "", fileUrl);
       updateSessionUrl(id);
       setActive(
         demoThreads.find((entry) => entry.id === id) ||
@@ -886,13 +1073,21 @@ export function App() {
       setDiff(id === "demo" ? diffFromItems(initialDemoItems) : "");
       return;
     }
-    if (submitting.current || !beginSessionLoading(id, "Opening session")) return;
+    if (!beginSessionLoading(id, "Opening session")) return;
     setMessageHistory({ cursor: null, hasEarlier: false, loading: false });
     send({ type: "thread.resume", threadId: id });
   };
   const branchFrom = (sourceTurnId: string) => {
     if (!active || !sourceTurnId || running || queued || sessionLoadingRef.current) return;
+    if (!mayChangeContext()) return;
     if (demo) {
+      setFiles(false);
+      setFileTarget("");
+      setFileScope("workspace");
+      const fileUrl = new URL(location.href);
+      fileUrl.searchParams.delete("file");
+      fileUrl.searchParams.delete("scope");
+      history.replaceState(null, "", fileUrl);
       const boundary = lastTurnIndex(items, sourceTurnId);
       const branchItems = boundary >= 0 ? items.slice(0, boundary + 1) : items;
       const thread: Thread = {
@@ -912,6 +1107,7 @@ export function App() {
       send({ type: "thread.fork", threadId: active.id, turnId: sourceTurnId });
   };
   const mutateThread = (action: "archive" | "unarchive" | "delete", id: string) => {
+    if (action !== "unarchive" && activeRef.current?.id === id && !mayChangeContext()) return;
     if (!demo) return send({ type: `thread.${action}`, threadId: id });
     const source = [...threads, ...archivedThreads];
     const thread = source.find((entry) => entry.id === id);
@@ -920,6 +1116,13 @@ export function App() {
     if (action === "archive" && thread) setArchivedThreads((old) => [thread, ...old]);
     if (action === "unarchive" && thread) setThreads((old) => [thread, ...old]);
     if (active?.id === id && action !== "unarchive") {
+      setFiles(false);
+      setFileTarget("");
+      setFileScope("workspace");
+      const fileUrl = new URL(location.href);
+      fileUrl.searchParams.delete("file");
+      fileUrl.searchParams.delete("scope");
+      history.replaceState(null, "", fileUrl);
       setActive(null);
       setItems([]);
       setDiff("");
@@ -944,6 +1147,7 @@ export function App() {
         const created = await send({
           type: "thread.create",
           workspace: metaRef.current.workspace,
+          workspaceToken: metaRef.current.workspaceToken,
           model,
           effort,
           permission,
@@ -1067,7 +1271,7 @@ export function App() {
     }
   };
   const request = useCallback(
-    <T,>(key: string, message: any) =>
+    <T,>(_key: string, message: any) =>
       new Promise<T>((resolve) => {
         if (!demo) {
           const requestId = crypto.randomUUID();
@@ -1083,11 +1287,11 @@ export function App() {
             ...message,
             requestId,
             workspace: metaRef.current.workspace,
+            workspaceToken: metaRef.current.workspaceToken,
             threadId: activeRef.current?.id,
           });
           return;
         }
-        pending.current.set(key, resolve);
         window.setTimeout(() => {
           let value: any;
           if (message.type === "fs.read") {
@@ -1152,8 +1356,7 @@ export function App() {
                   { name: "package.json", path: "package.json", type: "file" },
                   { name: "README.md", path: "README.md", type: "file" },
                 ];
-          pending.current.get(key)?.(value);
-          pending.current.delete(key);
+          resolve(value);
         }, 50);
       }),
     [send],
@@ -1266,25 +1469,79 @@ export function App() {
     [request, fileScope],
   );
   const loadWorkspaces = useCallback(
-    async (path: string) => {
-      const result = await request<any>(`workspace:${path}`, { type: "workspace.list", path });
+    async (path: string, showHidden: boolean) => {
+      const result = await request<any>(`workspace:${path}`, {
+        type: "workspace.list",
+        path,
+        showHidden,
+      });
       if (result.error) throw new Error(result.error);
       return Array.isArray(result) ? result : result.entries;
     },
     [request],
   );
-  const chooseWorkspace = (path: string) =>
-    demo
-      ? (setMeta((old) => ({
-          ...old,
-          workspace: `${old.workspaceBase}/${path}`.replace(/\/$/, ""),
-          workspaceSelected: true,
-        })),
-        setWorkspacePicker(false),
-        setActive(null),
-        setItems([]),
-        setDiff(""))
-      : send({ type: "workspace.select", path });
+  const resolveWorkspace = useCallback(
+    async (path: string) => {
+      if (demo) {
+        const base = metaRef.current.workspaceBase.replace(/\/$/, "");
+        const value = path;
+        if (!value.trim()) throw new Error("Enter a folder path");
+        const expanded =
+          value === "~" ? base : value.startsWith("~/") ? `${base}/${value.slice(2)}` : value;
+        const parts: string[] = [];
+        for (const part of (expanded.startsWith("/") ? expanded : `${base}/${expanded}`).split(
+          "/",
+        )) {
+          if (!part || part === ".") continue;
+          if (part === "..") parts.pop();
+          else parts.push(part);
+        }
+        const absolute = `/${parts.join("/")}`;
+        if (absolute !== base && !absolute.startsWith(`${base}/`))
+          throw new Error("Folder is outside the browsing root");
+        return { path: absolute === base ? "" : absolute.slice(base.length + 1), absolute };
+      }
+      const result = await request<any>(`workspace-resolve:${path}`, {
+        type: "workspace.resolve",
+        path,
+      });
+      if (result.error || result.type === "error") throw new Error(result.error || result.message);
+      return { path: result.path as string, absolute: result.absolute as string };
+    },
+    [request],
+  );
+  const chooseWorkspace = async (path: string) => {
+    if (submitting.current || sessionLoadingRef.current)
+      throw new Error("Wait for the current operation to finish before changing folders.");
+    if (
+      files &&
+      !window.dispatchEvent(new Event("codex:before-workspace-change", { cancelable: true }))
+    )
+      throw new Error("The current workspace was not changed.");
+    if (demo) {
+      setMeta((old) => ({
+        ...old,
+        workspace: `${old.workspaceBase}/${path}`.replace(/\/$/, ""),
+        workspaceSelected: true,
+      }));
+      setFiles(false);
+      setFileTarget("");
+      setFileScope("workspace");
+      const fileUrl = new URL(location.href);
+      fileUrl.searchParams.delete("file");
+      fileUrl.searchParams.delete("scope");
+      history.replaceState(null, "", fileUrl);
+      setWorkspacePicker(false);
+      setActive(null);
+      updateSessionUrl();
+      setItems([]);
+      setDiff("");
+      return;
+    }
+    const result = await send({ type: "workspace.select", path });
+    const error = result.find((entry) => entry.type === "error");
+    if (error) throw new Error(error.message);
+  };
 
   const sidebarProps = {
     threads,
@@ -1297,6 +1554,19 @@ export function App() {
     remove: (id: string) => mutateThread("delete", id),
     chooseWorkspace: () => setWorkspacePicker(true),
     workspace: meta.workspaceSelected ? meta.workspace : "",
+    pendingInteractions:
+      demo && active
+        ? items
+            .filter(
+              (item) =>
+                (item.type === "approval" || item.type === "question") && item.status === "pending",
+            )
+            .map((item) => ({
+              threadId: active.id,
+              id: item.id,
+              type: item.type as "approval" | "question",
+            }))
+        : pendingInteractions,
     moreRecent: Boolean(threadCursors.recent),
     moreArchived: Boolean(threadCursors.archived),
     loadMore: (view: "recent" | "archived") =>
@@ -1311,6 +1581,23 @@ export function App() {
       item.type === "question" && item.status === "pending",
   );
   const blockingQuestion = questions.some((item) => item.blocking);
+  const approvals = items.filter(
+    (item): item is Extract<UiItem, { type: "approval" }> =>
+      item.type === "approval" && item.status === "pending",
+  );
+  const selectedApprovalId =
+    reviewingApproval && reviewingApproval.threadId === active?.id ? reviewingApproval.id : "";
+  const currentApproval = approvals.find((item) => item.id === selectedApprovalId);
+  useEffect(() => {
+    if (currentApproval || !active) return;
+    const next = approvals.find((item) => !seenApprovals.current.has(`${active.id}:${item.id}`));
+    if (next) {
+      seenApprovals.current.add(`${active.id}:${next.id}`);
+      while (seenApprovals.current.size > 256)
+        seenApprovals.current.delete(seenApprovals.current.values().next().value!);
+      setReviewingApproval({ threadId: active.id, id: next.id });
+    } else if (reviewingApproval) setReviewingApproval(null);
+  }, [items, active, currentApproval, reviewingApproval]);
   const answerQuestion = async (
     item: Extract<UiItem, { type: "question" }>,
     answers: QuestionAnswers,
@@ -1344,7 +1631,125 @@ export function App() {
     if (question)
       document
         .getElementById(`interaction-${question.id}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const openInteraction = useCallback(
+    (id: string) => {
+      const item = items.find(
+        (entry) => entry.id === id && (entry.type === "question" || entry.type === "approval"),
+      );
+      if (!item || !active) return false;
+      setWorkspacePicker(false);
+      if (files && !window.dispatchEvent(new Event("codex:open-interaction", { cancelable: true })))
+        return false;
+      setSettings(false);
+      setChanges(false);
+      setSidebar(false);
+      if (item.type === "approval" && item.status === "pending") {
+        seenApprovals.current.add(`${active.id}:${item.id}`);
+        setReviewingApproval({ threadId: active.id, id: item.id });
+      } else {
+        setReviewingApproval(null);
+        window.requestAnimationFrame(() =>
+          document
+            .getElementById(`interaction-${id}`)
+            ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        );
+      }
+      return true;
+    },
+    [items, active, files],
+  );
+  useEffect(() => {
+    const target = interactionToOpen.current;
+    if (!target || active?.id !== target.threadId || !openInteraction(target.id)) return;
+    interactionToOpen.current = null;
+    const url = new URL(location.href);
+    url.searchParams.delete("interaction");
+    history.replaceState(null, "", url);
+  }, [active?.id, openInteraction]);
+  useEffect(() => {
+    const listener = (event: Event) => {
+      const target = (event as CustomEvent<{ threadId: string; interactionId: string }>).detail;
+      if (target && typeof target.threadId === "string")
+        setNotificationTarget({
+          threadId: target.threadId,
+          interactionId: target.interactionId || "",
+        });
+    };
+    window.addEventListener("codex:open-thread", listener);
+    return () => window.removeEventListener("codex:open-thread", listener);
+  }, []);
+  useEffect(() => {
+    if (!notificationTarget) return;
+    if (active?.id === notificationTarget.threadId) {
+      if (notificationTarget.interactionId) openInteraction(notificationTarget.interactionId);
+      setNotificationTarget(null);
+      return;
+    }
+    if (sessionLoadingRef.current) return;
+    if (submitting.current) {
+      const timer = window.setTimeout(() => setNotificationRetry((value) => value + 1), 500);
+      return () => window.clearTimeout(timer);
+    }
+    setWorkspacePicker(false);
+    if (
+      files &&
+      !window.dispatchEvent(new Event("codex:before-workspace-change", { cancelable: true }))
+    ) {
+      setNotificationTarget(null);
+      return;
+    }
+    interactionToOpen.current = notificationTarget.interactionId
+      ? { threadId: notificationTarget.threadId, id: notificationTarget.interactionId }
+      : null;
+    setSettings(false);
+    setChanges(false);
+    setSidebar(false);
+    if (beginSessionLoading(notificationTarget.threadId, "Opening session")) {
+      setMessageHistory({ cursor: null, hasEarlier: false, loading: false });
+      void send({ type: "thread.resume", threadId: notificationTarget.threadId });
+      setNotificationTarget(null);
+    }
+  }, [
+    notificationTarget,
+    notificationRetry,
+    active?.id,
+    files,
+    sessionLoading,
+    openInteraction,
+    beginSessionLoading,
+    send,
+  ]);
+  const respondToApproval = async (
+    item: Extract<UiItem, { type: "approval" }>,
+    decision: ApprovalDecision,
+  ) => {
+    if (demo) {
+      const key = typeof decision === "string" ? decision : Object.keys(decision)[0];
+      setItems((old) =>
+        old.map((entry) =>
+          entry.id === item.id
+            ? {
+                ...item,
+                status:
+                  key === "decline" || key === "cancel"
+                    ? ("denied" as const)
+                    : ("approved" as const),
+              }
+            : entry,
+        ),
+      );
+      return;
+    }
+    const result = await send({
+      type: "approval.respond",
+      threadId: active?.id,
+      approvalId: item.requestId,
+      decision,
+    });
+    const error = result.find((entry) => entry.type === "error");
+    if (error) throw new Error(error.message);
   };
   const title = active?.name || active?.preview || "New thread";
   const openWorkspaceFile = useCallback(
@@ -1433,13 +1838,15 @@ export function App() {
                 <i className={connected || demo ? "online" : ""} />
                 {queued
                   ? "Waiting in queue"
-                  : blockingQuestion
-                    ? "Waiting for your answer"
-                    : running
-                      ? "Codex is working"
-                      : meta.workspaceSelected
-                        ? meta.workspace.split("/").filter(Boolean).pop()
-                        : "Choose a workspace"}
+                  : approvals.length
+                    ? "Waiting for approval"
+                    : blockingQuestion
+                      ? "Waiting for your answer"
+                      : running
+                        ? "Codex is working"
+                        : meta.workspaceSelected
+                          ? meta.workspace.split("/").filter(Boolean).pop()
+                          : "Choose a workspace"}
               </span>
             </div>
           </div>
@@ -1491,14 +1898,20 @@ export function App() {
           </div>
         </header>
         {!demo &&
-          !notificationPromptDismissed &&
-          ["default", "insecure"].includes(notifications.status) && (
+          (!notificationPromptDismissed || Boolean(notifications.error)) &&
+          (notifications.status !== "granted" || Boolean(notifications.error)) && (
             <div className="notification-prompt" role="status">
               <Bell aria-hidden="true" />
               <span>
-                {notifications.status === "insecure"
-                  ? "Task notifications require HTTPS or localhost."
-                  : "Get a browser notification when your task finishes."}
+                {notifications.error ||
+                  {
+                    default: "Get browser notifications for tasks, questions and approvals.",
+                    denied:
+                      "Notifications are blocked. Allow them in your browser's site settings.",
+                    insecure: "Notifications require HTTPS or localhost.",
+                    unsupported: "This browser does not support desktop notifications.",
+                    granted: "Notifications are enabled.",
+                  }[notifications.status]}
               </span>
               {notifications.status === "default" && (
                 <button
@@ -1512,7 +1925,10 @@ export function App() {
               <button
                 className="icon-button"
                 aria-label="Dismiss notification reminder"
-                onClick={() => setNotificationPromptDismissed(true)}
+                onClick={() => {
+                  setNotificationPromptDismissed(true);
+                  notifications.clearError();
+                }}
               >
                 <X />
               </button>
@@ -1530,6 +1946,7 @@ export function App() {
             }}
             scrollRequest={scrollRequest}
             workspace={meta.workspace}
+            workspaceToken={meta.workspaceToken}
             sessionDirectory={
               active && meta.sessionFilesRoot ? `${meta.sessionFilesRoot}/${active.id}` : ""
             }
@@ -1557,32 +1974,25 @@ export function App() {
               setMode("plan");
               setRestoreDraft({
                 id: crypto.randomUUID(),
+                threadId: active?.id || "",
                 text: "Revise the plan: ",
                 attachments: [],
               });
             }}
-            respond={(item, decision) => {
-              if (!demo)
-                void send({
-                  type: "approval.respond",
-                  threadId: active?.id,
-                  approvalId: item.requestId,
-                  decision,
-                });
-              else
-                setItems((old) =>
-                  old.map((entry) =>
-                    entry.id === item.id ? { ...item, status: "approved" } : entry,
-                  ),
-                );
-            }}
           />
           <Composer
+            draftKey={
+              active?.id
+                ? `thread:${active.id}`
+                : `workspace:${meta.workspaceSelected ? meta.workspace : "unselected"}`
+            }
             mode={mode}
             onMode={setMode}
             pendingQuestions={questions.length}
+            pendingApprovals={approvals.length}
             blockingQuestion={blockingQuestion}
             onAnswerQuestion={jumpToQuestion}
+            onReviewApproval={() => approvals[0] && openInteraction(approvals[0].id)}
             running={running}
             queued={queued}
             restoreDraft={restoreDraft}
@@ -1614,8 +2024,11 @@ export function App() {
       )}
       {files && (
         <FileDrawer
-          key={`${meta.workspace}:${active?.id || ""}:${fileScope}`}
+          key={`${meta.workspace}:${fileScope}:${fileScope === "thread" ? active?.id || "" : "project"}`}
           scope={fileScope}
+          chooseWorkspace={() => {
+            setWorkspacePicker(true);
+          }}
           onScopeChange={(scope) => {
             setFileTarget("");
             setFileScope(scope);
@@ -1633,6 +2046,7 @@ export function App() {
           remove={deleteFile}
           basePath={meta.basePath}
           workspace={meta.workspace}
+          workspaceToken={meta.workspaceToken}
           threadId={active?.id}
           initialPath={fileTarget}
           onSaved={(path, before, after) => {
@@ -1644,13 +2058,28 @@ export function App() {
         />
       )}
       {changes && <DiffDrawer diff={diff} close={() => setChanges(false)} />}
+      {currentApproval && !workspacePicker && (
+        <ApprovalDialog
+          key={`${active?.id}:${currentApproval.id}`}
+          item={currentApproval}
+          close={closeApproval}
+          respond={(decision) => respondToApproval(currentApproval, decision)}
+        />
+      )}
       {workspacePicker && (
         <WorkspacePicker
-          close={() => setWorkspacePicker(false)}
+          close={() => {
+            setWorkspacePicker(false);
+            setWorkspaceNotice("");
+          }}
           load={loadWorkspaces}
+          resolve={resolveWorkspace}
           select={chooseWorkspace}
           current={meta.workspaceSelected ? meta.workspace : ""}
           base={meta.workspaceBase}
+          start={meta.workspaceStart}
+          active={Boolean(active)}
+          notice={workspaceNotice}
         />
       )}
       {settings && (

@@ -206,6 +206,7 @@ const runningTurn = (thread: any) => {
 };
 
 export class CodexController {
+  private readonly workspaceKey = crypto.randomBytes(32);
   private pendingApprovals = new Map<string | number, { threadId?: string; item: any }>();
   private questions = new Map<
     string,
@@ -251,7 +252,7 @@ export class CodexController {
       if (status === "stopped" || status === "error") {
         this.runningThreads.clear();
         this.activeTurns.clear();
-        this.pendingApprovals.clear();
+        for (const id of this.pendingApprovals.keys()) this.expireApproval(id);
         this.expireQuestions();
         this.busy = false;
         this.startedAt = null;
@@ -310,6 +311,9 @@ export class CodexController {
         return;
       }
       if (message.method === "serverRequest/resolved") {
+        const approval = this.pendingApprovals.get(message.params?.requestId);
+        if (approval && (!threadId || approval.threadId === threadId))
+          this.expireApproval(message.params?.requestId);
         for (const entry of this.questions.values())
           if (
             entry.threadId === threadId &&
@@ -359,9 +363,12 @@ export class CodexController {
         this.events.push({ type: "items", threadId: message.params?.threadId, items: [request] });
         return;
       }
-      if (message.method === "turn/completed" || message.method === "error")
+      if (
+        message.method === "turn/completed" ||
+        (message.method === "error" && !message.params?.willRetry)
+      )
         for (const [id, entry] of this.pendingApprovals)
-          if (entry.threadId === message.params?.threadId) this.pendingApprovals.delete(id);
+          if (entry.threadId === message.params?.threadId) this.expireApproval(id);
       const event = adapt(message);
       if (event) {
         if (event.items) {
@@ -386,6 +393,29 @@ export class CodexController {
         this.events.push({ type: "event", ...event });
       }
     });
+  }
+
+  private expireApproval(id: string | number) {
+    const entry = this.pendingApprovals.get(id);
+    if (!entry) return;
+    this.pendingApprovals.delete(id);
+    if (entry.threadId)
+      this.events.push({
+        type: "items",
+        threadId: entry.threadId,
+        items: [{ ...entry.item, status: "expired" }],
+      });
+  }
+
+  private pendingInteractions() {
+    return [
+      ...[...this.pendingApprovals.values()]
+        .filter((entry) => entry.threadId)
+        .map((entry) => ({ threadId: entry.threadId, id: entry.item.id, type: "approval" })),
+      ...[...this.questions.values()]
+        .filter((entry) => entry.item.status === "pending")
+        .map((entry) => ({ threadId: entry.threadId, id: entry.item.id, type: "question" })),
+    ];
   }
 
   private rememberQuestion(threadId: string, item: QuestionItem) {
@@ -458,7 +488,7 @@ export class CodexController {
         eventCursor: this.events.current,
         eventInstance: this.events.instance,
         runtime: this.runtime(),
-        meta: { ...this.meta(), codexStatus: this.codex.status },
+        meta: { ...this.defaultWorkspaceMeta(), codexStatus: this.codex.status },
       };
     const eventCursor = this.events.current;
     const [modelResult, threadResult, defaults] = await Promise.all([
@@ -475,7 +505,8 @@ export class CodexController {
       eventCursor,
       eventInstance: this.events.instance,
       runtime: this.runtime(),
-      meta: { ...this.meta(), codexStatus: this.codex.status },
+      pendingInteractions: this.pendingInteractions(),
+      meta: { ...this.defaultWorkspaceMeta(), codexStatus: this.codex.status },
       models: this.models,
       ...defaults,
       threads: (threadResult.data || []).map((thread: any) => ({
@@ -651,15 +682,42 @@ export class CodexController {
     return result;
   }
 
-  async workspaceFor(msg: { threadId?: string; workspace?: string }) {
+  private workspaceToken(workspace: string) {
+    const value = Buffer.from(workspace).toString("base64url");
+    const signature = crypto
+      .createHmac("sha256", this.workspaceKey)
+      .update(value)
+      .digest("base64url");
+    return `${value}.${signature}`;
+  }
+
+  private tokenWorkspace(token?: string) {
+    if (!token || token.length > 8192) throw new Error("Choose a workspace first");
+    const [value, signature, extra] = token.split(".");
+    if (!value || !signature || extra) throw new Error("Invalid workspace selection");
+    const expected = crypto.createHmac("sha256", this.workspaceKey).update(value).digest();
+    const actual = Buffer.from(signature, "base64url");
+    if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected))
+      throw new Error("Workspace selection expired; choose the folder again");
+    return Buffer.from(value, "base64url").toString("utf8");
+  }
+
+  private defaultWorkspaceMeta() {
+    return {
+      ...this.meta(),
+      workspaceToken: this.fs.isSelected ? this.workspaceToken(this.fs.path) : "",
+    };
+  }
+
+  async workspaceFor(msg: { threadId?: string; workspaceToken?: string }) {
     const cwd = msg.threadId
       ? this.attachments.workspaceFor(msg.threadId)
-      : msg.workspace || (this.fs.isSelected ? this.fs.path : "");
+      : this.tokenWorkspace(msg.workspaceToken);
     if (!cwd) throw new Error("Workspace is unavailable; reopen the session or choose a folder");
     return this.fs.scoped(cwd);
   }
 
-  async filesFor(msg: { scope?: string; threadId?: string; workspace?: string }) {
+  async filesFor(msg: { scope?: string; threadId?: string; workspaceToken?: string }) {
     if (!msg.scope || msg.scope === "workspace") return this.workspaceFor(msg);
     if (msg.scope !== "thread") throw new Error("Unknown file scope");
     const directory = await this.attachments.directoryFor(msg.threadId || "");
@@ -670,10 +728,11 @@ export class CodexController {
 
   private workspaceMeta(scope: WorkspaceFs) {
     return {
-      ...this.meta(),
+      ...this.defaultWorkspaceMeta(),
       workspace: scope.path,
       workspaceBase: scope.basePath,
       workspaceSelected: true,
+      workspaceToken: this.workspaceToken(scope.path),
     };
   }
 
@@ -713,6 +772,7 @@ export class CodexController {
         ...this.meta(),
         workspace: "",
         workspaceSelected: false,
+        workspaceToken: "",
         error: errorMessage(error),
       };
     }
@@ -783,6 +843,7 @@ export class CodexController {
       model: result.model,
       effort: result.reasoningEffort,
       eventInstance: this.events.instance,
+      pendingInteractions: this.pendingInteractions(),
     };
   }
 
@@ -949,7 +1010,7 @@ export class CodexController {
         return [{ type: "models", models: this.models, ...defaults }];
       }
       if (msg.type === "thread.create") {
-        const scope = await this.workspaceFor({ workspace: msg.workspace });
+        const scope = await this.workspaceFor({ workspaceToken: msg.workspaceToken });
         const result = await this.codex.request("thread/start", {
           cwd: scope.path,
           model: msg.model || null,
@@ -1035,6 +1096,13 @@ export class CodexController {
           throw new Error("Stop the task before deleting this thread");
         await this.codex.request("thread/delete", { threadId: msg.threadId });
         await this.attachments.removeThread(String(msg.threadId || ""));
+        for (const [id, entry] of this.pendingApprovals)
+          if (entry.threadId === msg.threadId) this.expireApproval(id);
+        for (const [id, entry] of this.questions)
+          if (entry.threadId === msg.threadId) {
+            if (entry.item.status === "pending") this.expireQuestion(entry);
+            this.questions.delete(id);
+          }
         if (this.activeThreadId === msg.threadId) this.activeThreadId = "";
         return [{ type: "thread.mutated", action: "delete", threadId: msg.threadId }];
       }
@@ -1254,7 +1322,7 @@ export class CodexController {
           {
             type: "workspace.entries",
             path: msg.path || "",
-            entries: await this.fs.listWorkspaces(msg.path || ""),
+            entries: await this.fs.listWorkspaces(msg.path || "", Boolean(msg.showHidden)),
             base: this.fs.basePath,
             current: this.fs.path,
           },
@@ -1264,9 +1332,21 @@ export class CodexController {
           this.fs.isSelected ? this.fs.path : undefined,
         );
         return [
-          { type: "workspace.selected", ...this.meta(), sessionFileThreads: [], ...defaults },
+          {
+            type: "workspace.selected",
+            ...this.defaultWorkspaceMeta(),
+            sessionFileThreads: [],
+            ...defaults,
+          },
         ];
       }
+      if (msg.type === "workspace.resolve")
+        return [
+          {
+            type: "workspace.resolved",
+            ...(await this.fs.resolveWorkspace(String(msg.path || ""))),
+          },
+        ];
       if (msg.type === "workspace.select") {
         const selectedScope = await this.fs.scoped(this.fs.basePath);
         const selected = await selectedScope.select(msg.path || "");
@@ -1330,7 +1410,7 @@ export class CodexController {
             await this.queue.reset();
             this.runningThreads.clear();
             this.activeTurns.clear();
-            this.pendingApprovals.clear();
+            for (const id of this.pendingApprovals.keys()) this.expireApproval(id);
             this.expireQuestions();
             this.busy = false;
             this.startedAt = null;

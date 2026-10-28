@@ -197,6 +197,7 @@ export function adapt(message: JsonRpcMessage): {
           text: p.delta || "",
           streaming: true,
           delta: true,
+          ...(p.phase === "commentary" || p.phase === "final_answer" ? { phase: p.phase } : {}),
         },
       ],
     };
@@ -324,7 +325,15 @@ export function adapt(message: JsonRpcMessage): {
       return {
         threadId: p.threadId,
         items: [
-          { type: "assistant_message", id: item.id, text: item.text || "", streaming: !done },
+          {
+            type: "assistant_message",
+            id: item.id,
+            text: item.text || "",
+            streaming: !done,
+            ...(item.phase === "commentary" || item.phase === "final_answer"
+              ? { phase: item.phase }
+              : {}),
+          },
           ...(question ? [question] : []),
         ],
       };

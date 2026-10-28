@@ -8,7 +8,7 @@ import {
   Terminal,
   XCircle,
 } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo, useState } from "react";
 import type { UiItem } from "../types";
 
 type ToolItem = Exclude<
@@ -39,10 +39,7 @@ function TypeIcon({ item }: { item: ToolItem }) {
 
 export const ToolCard = memo(function ToolCard({ item }: { item: ToolItem }) {
   const live = (item.type === "thinking" || item.type === "command") && item.status === "running";
-  const [open, setOpen] = useState(live);
-  useEffect(() => {
-    if (live) setOpen(true);
-  }, [live]);
+  const [open, setOpen] = useState(false);
   const label =
     item.type === "thinking"
       ? "Reasoning"

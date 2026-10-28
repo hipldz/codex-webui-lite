@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { Thread } from "../types";
+import type { PendingInteraction, Thread } from "../types";
 import { threadIsRunning } from "../thread-status";
 import { CodexLogo } from "./CodexLogo";
 
@@ -40,6 +40,7 @@ type Props = {
   onCollapse?: () => void;
   onDismiss?: () => void;
   workspace?: string;
+  pendingInteractions?: PendingInteraction[];
   moreRecent?: boolean;
   moreArchived?: boolean;
   loadMore?: (view: "recent" | "archived") => void;
@@ -58,6 +59,7 @@ export function Sidebar({
   onCollapse,
   onDismiss,
   workspace,
+  pendingInteractions = [],
   moreRecent,
   moreArchived,
   loadMore,
@@ -235,15 +237,28 @@ export function Sidebar({
                   <span>
                     <span className="thread-title">
                       <b>{thread.name || thread.preview || "New thread"}</b>
-                      {threadIsRunning(thread) && (
+                      {pendingInteractions.some((item) => item.threadId === thread.id) ? (
                         <span
-                          className="thread-running"
-                          aria-label="Running"
-                          title="Codex is working"
+                          className="thread-attention"
+                          title="This conversation needs your attention"
                         >
-                          <LoaderCircle />
-                          Running
+                          {pendingInteractions.some(
+                            (item) => item.threadId === thread.id && item.type === "approval",
+                          )
+                            ? "Approval"
+                            : "Answer"}
                         </span>
+                      ) : (
+                        threadIsRunning(thread) && (
+                          <span
+                            className="thread-running"
+                            aria-label="Running"
+                            title="Codex is working"
+                          >
+                            <LoaderCircle />
+                            Running
+                          </span>
+                        )
                       )}
                     </span>
                     <small>

@@ -159,6 +159,7 @@ function Tree({
 export function FileDrawer({
   scope,
   onScopeChange,
+  chooseWorkspace,
   sessionRoot,
   close,
   load,
@@ -170,12 +171,14 @@ export function FileDrawer({
   remove,
   basePath = "/",
   workspace = "",
+  workspaceToken = "",
   threadId,
   initialPath = "",
   onSaved,
 }: {
   scope: FileScope;
   onScopeChange: (scope: FileScope) => void;
+  chooseWorkspace: () => void;
   sessionRoot: string;
   close: () => void;
   load: (path: string) => Promise<FileEntry[]>;
@@ -190,6 +193,7 @@ export function FileDrawer({
   remove: (path: string) => Promise<{ path: string }>;
   basePath?: string;
   workspace?: string;
+  workspaceToken?: string;
   threadId?: string;
   search: (query: string) => Promise<{ entries: FileEntry[]; truncated: boolean }>;
   initialPath?: string;
@@ -211,6 +215,7 @@ export function FileDrawer({
   const [saved, setSaved] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [interactionNotice, setInteractionNotice] = useState("");
   const uploadInput = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -232,10 +237,40 @@ export function FileDrawer({
     () => !busyRef.current && (!dirtyRef.current || window.confirm("Discard unsaved changes?")),
     [],
   );
-  const requestClose = () => {
-    if (mayDiscard()) close();
-  };
-  const fileScope = `&${new URLSearchParams({ scope, ...(threadId ? { threadId } : { workspace }) })}`;
+  const requestClose = useCallback(() => {
+    if (!mayDiscard()) return false;
+    close();
+    return true;
+  }, [mayDiscard, close]);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      if (!requestClose()) {
+        event.preventDefault();
+        setInteractionNotice(
+          busyRef.current
+            ? "Finish the file operation, then open the pending request."
+            : "The request is still waiting in the conversation.",
+        );
+      }
+    };
+    const beforeWorkspaceChange = (event: Event) => {
+      if (!mayDiscard()) {
+        event.preventDefault();
+        setInteractionNotice(
+          busyRef.current
+            ? "Finish the file operation before switching conversations."
+            : "The current conversation is still open.",
+        );
+      }
+    };
+    window.addEventListener("codex:open-interaction", handler);
+    window.addEventListener("codex:before-workspace-change", beforeWorkspaceChange);
+    return () => {
+      window.removeEventListener("codex:open-interaction", handler);
+      window.removeEventListener("codex:before-workspace-change", beforeWorkspaceChange);
+    };
+  }, [requestClose, mayDiscard]);
+  const fileScope = `&${new URLSearchParams({ scope, ...(threadId ? { threadId } : { workspaceToken }) })}`;
   const session = scope === "thread";
   const scopeLabel = session ? "Session files" : "Project files";
   const rootPath = session ? sessionRoot : workspace;
@@ -457,6 +492,18 @@ export function FileDrawer({
             <X />
           </button>
         </header>
+        {interactionNotice && (
+          <div className="file-interaction-notice" role="status">
+            <span>{interactionNotice}</span>
+            <button
+              type="button"
+              aria-label="Dismiss notice"
+              onClick={() => setInteractionNotice("")}
+            >
+              <X />
+            </button>
+          </div>
+        )}
         <div
           className="file-scope-switch"
           role="tablist"
@@ -537,6 +584,14 @@ export function FileDrawer({
               <summary>Storage location</summary>
               <code>{rootPath}</code>
             </details>
+            <button
+              className="file-choose-workspace"
+              type="button"
+              disabled={busy}
+              onClick={chooseWorkspace}
+            >
+              Browse other folders
+            </button>
             <div className="file-controls">
               <label className="search">
                 <Search />
