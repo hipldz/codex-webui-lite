@@ -2,18 +2,31 @@ import { defaultUrlTransform } from "react-markdown";
 import type { FileScope } from "./types";
 
 export const normalizeFilePath = (value: string) => {
-  const path = value.replace(/^file:\/\//, "").split(/[?#]/, 1)[0];
-  try {
-    return decodeURIComponent(path)
-      .replaceAll("\\", "/")
-      .replace(/:\d+(?::\d+)?$/, "");
-  } catch {
-    return path.replaceAll("\\", "/").replace(/:\d+(?::\d+)?$/, "");
+  let path = value.split(/[?#]/, 1)[0];
+  if (/^file:/i.test(value)) {
+    try {
+      const url = new URL(value);
+      path = `${url.hostname && url.hostname.toLowerCase() !== "localhost" ? `//${url.hostname}` : ""}${url.pathname}`;
+    } catch {
+      path = path.replace(/^file:\/\//i, "");
+    }
   }
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    /* Keep literal percent signs in local filenames. */
+  }
+  return path
+    .replaceAll("\\", "/")
+    .replace(/^\/([a-z]:\/)/i, "$1")
+    .replace(/:\d+(?::\d+)?$/, "");
 };
 
+const absoluteFilePath = (value: string) => value.startsWith("/") || /^[a-z]:\//i.test(value);
+
 export function workspaceFile(href: string, workspace: string) {
-  if (!href || href.startsWith("#") || /^(https?|mailto|tel):/i.test(href)) return null;
+  if (!href || href.startsWith("#") || href.startsWith("//") || /^(https?|mailto|tel):/i.test(href))
+    return null;
   let candidate = normalizeFilePath(href);
   const normalizedRoot = workspace.replaceAll("\\", "/");
   const root = normalizedRoot === "/" ? "/" : normalizedRoot.replace(/\/$/, "");
@@ -41,10 +54,12 @@ export function workspaceFile(href: string, workspace: string) {
   return { unavailable: false as const, path: parts.join("/") };
 }
 
-// react-markdown treats a Windows drive letter as a URL scheme. Preserve only
-// drive-absolute link targets; all other URLs keep its normal safety filter.
+// Local paths are sent through the file API rather than opened by the browser.
 export const markdownUrlTransform = (url: string, key: string) =>
-  key === "href" && /^[A-Za-z]:[\\/]/.test(url) ? url : defaultUrlTransform(url);
+  ["href", "src"].includes(key) &&
+  (/^[A-Za-z]:[\\/]/.test(url) || (/^file:/i.test(url) && absoluteFilePath(normalizeFilePath(url))))
+    ? url
+    : defaultUrlTransform(url);
 
 export function conversationFile(
   href: string,
@@ -65,6 +80,21 @@ export function conversationFile(
     }
   }
   const project = workspaceFile(href, workspace);
+  if (project?.unavailable) {
+    const root = workspace.replaceAll("\\", "/");
+    const local = absoluteFilePath(normalized)
+      ? normalized
+      : normalized.split("/").includes("..") && absoluteFilePath(root)
+        ? `${root.replace(/\/$/, "")}/${normalized}`
+        : "";
+    if (local)
+      return {
+        unavailable: false as const,
+        path: local,
+        scope: "local" as const,
+        ownerThreadId: undefined,
+      };
+  }
   return project ? { ...project, scope: "workspace" as const, ownerThreadId: undefined } : null;
 }
 

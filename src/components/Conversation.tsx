@@ -326,7 +326,7 @@ const MarkdownBody = memo(function MarkdownBody({
             return (
               <span
                 className="unavailable-file-link"
-                title="This file is outside the project and current session files"
+                title="Use an absolute local file path to open a file outside the project"
               >
                 {children}
               </span>
@@ -363,6 +363,18 @@ const MarkdownBody = memo(function MarkdownBody({
               >
                 {children}
                 <small className="file-link-scope">Earlier session</small>
+              </a>
+            );
+          if (local.scope === "local")
+            return (
+              <a
+                className="workspace-file-link file-link-local"
+                title={`Download ${local.path}`}
+                href={`${prefix}/api/files/download?${new URLSearchParams({ path: local.path, scope: "local", threadId })}`}
+                download
+              >
+                {children}
+                <small className="file-link-scope">Local file</small>
               </a>
             );
           return (

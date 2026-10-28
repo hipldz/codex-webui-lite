@@ -219,6 +219,10 @@ export class AttachmentStore {
     this.threads.add(threadId);
   }
 
+  hasThread(threadId: string) {
+    return this.threads.has(threadId);
+  }
+
   workspaceFor(threadId: string) {
     return this.workspaces.get(threadId) || null;
   }

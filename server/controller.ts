@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import v8 from "node:v8";
 import {
   userInputRequest,
@@ -727,6 +729,26 @@ export class CodexController {
     const scope = new WorkspaceFs(directory, true, true);
     await scope.init();
     return scope;
+  }
+
+  async downloadFor(msg: {
+    path: string;
+    scope?: string;
+    threadId?: string;
+    workspaceToken?: string;
+  }) {
+    if (msg.scope !== "local") return (await this.filesFor(msg)).download(msg.path);
+    if (!this.attachments.hasThread(msg.threadId || ""))
+      throw new Error("Reopen the session before downloading this local file");
+    if (!path.isAbsolute(msg.path))
+      throw new Error(
+        /^[a-z]:[\\/]/i.test(msg.path)
+          ? "This Windows file path is not accessible from this server. The file must be on the machine running Codex Web UI."
+          : "Expected an absolute file path on the machine running Codex Web UI",
+      );
+    const file = await fs.realpath(msg.path);
+    const scope = await this.fs.scoped(path.dirname(file));
+    return scope.download(path.basename(file));
   }
 
   private workspaceMeta(scope: WorkspaceFs) {

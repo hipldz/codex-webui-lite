@@ -224,22 +224,35 @@ const server = http.createServer(async (req, res) => {
   ) {
     const relative = url.searchParams.get("path") || "";
     try {
-      const scope = await controller.filesFor({
+      const download = await controller.downloadFor({
+        path: relative,
         scope: url.searchParams.get("scope") || undefined,
         threadId: url.searchParams.get("threadId") || undefined,
         workspaceToken: url.searchParams.get("workspaceToken") || undefined,
       });
-      const download = await scope.download(relative);
       res.writeHead(200, fileHeaders(download, localPath.endsWith("/raw")));
       createReadStream(download.path)
         .on("error", () => res.end())
         .pipe(res);
-    } catch {
-      res.writeHead(404, {
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const local = url.searchParams.get("scope") === "local";
+      const denied = code === "EACCES" || code === "EPERM";
+      res.writeHead(denied ? 403 : 404, {
         "Content-Type": "text/plain; charset=utf-8",
         "Cache-Control": "no-store",
       });
-      res.end("Not found");
+      res.end(
+        local
+          ? denied
+            ? "The service account cannot read this file."
+            : code === "ENOENT" || code === "ENOTDIR"
+              ? "File not found on the machine running Codex Web UI."
+              : error instanceof Error
+                ? error.message
+                : "Local file unavailable."
+          : "Not found",
+      );
     }
     return;
   }
