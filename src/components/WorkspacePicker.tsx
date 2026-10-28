@@ -11,18 +11,21 @@ export function WorkspacePicker({
   base,
   start,
   active,
+  onSelectingChange,
   notice = "",
 }: {
   close: () => void;
   load: (path: string, showHidden: boolean) => Promise<FileEntry[]>;
-  resolve: (path: string) => Promise<{ path: string; absolute: string }>;
+  resolve: (path: string) => Promise<{ path: string; absolute: string; base: string }>;
   select: (path: string) => Promise<void>;
   current: string;
   base: string;
   start: string;
   active: boolean;
+  onSelectingChange: (selecting: boolean) => void;
   notice?: string;
 }) {
+  const [browseBase, setBrowseBase] = useState(base);
   const [path, setPath] = useState(() => {
     const normalizedBase = base.replaceAll("\\", "/").replace(/\/$/, "");
     const normalizedCurrent = (current || start).replaceAll("\\", "/");
@@ -41,6 +44,9 @@ export function WorkspacePicker({
   const [resolving, setResolving] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [input, setInput] = useState("");
+  const absolute = path
+    ? `${browseBase.replaceAll("\\", "/").replace(/\/$/, "")}/${path}`
+    : browseBase;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !selecting) close();
@@ -53,7 +59,7 @@ export function WorkspacePicker({
     setLoading(true);
     setError("");
     setListError("");
-    load(path, showHidden)
+    load(absolute, showHidden)
       .then((items) => {
         if (live) setEntries(items);
       })
@@ -69,22 +75,22 @@ export function WorkspacePicker({
     return () => {
       live = false;
     };
-  }, [path, showHidden, load, refresh]);
+  }, [absolute, showHidden, load, refresh]);
   const crumbs = useMemo(() => path.split("/").filter(Boolean), [path]);
-  const absolute = path ? `${base.replaceAll("\\", "/").replace(/\/$/, "")}/${path}` : base;
   useEffect(() => setInput(absolute), [absolute]);
   const comparable = (value: string) => {
     const normalized = value.replaceAll("\\", "/").replace(/\/$/, "") || "/";
     return /^[a-z]:/i.test(normalized) ? normalized.toLowerCase() : normalized;
   };
   const isCurrent = Boolean(current) && comparable(absolute) === comparable(current);
-  const navigate = async () => {
+  const navigate = async (target = input) => {
     if (resolving || selecting) return;
     setResolving(true);
     setError("");
     try {
-      const result = await resolve(input);
-      if (result.path === path) setRefresh((value) => value + 1);
+      const result = await resolve(target);
+      if (result.path === path && result.base === browseBase) setRefresh((value) => value + 1);
+      setBrowseBase(result.base);
       setPath(result.path);
       setInput(result.absolute);
     } catch (cause) {
@@ -96,17 +102,20 @@ export function WorkspacePicker({
   const confirm = async () => {
     if (loading || resolving || selecting || listError) return;
     setSelecting(true);
+    onSelectingChange(true);
     setError("");
     try {
       const target = await resolve(input);
+      setBrowseBase(target.base);
       setPath(target.path);
       setInput(target.absolute);
       if (active && current && comparable(target.absolute) === comparable(current)) close();
-      else await select(target.path);
+      else await select(target.absolute);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSelecting(false);
+      onSelectingChange(false);
     }
   };
   return (
@@ -136,8 +145,8 @@ export function WorkspacePicker({
         </header>
         <div className="workspace-breadcrumb">
           <button
-            aria-label="Browse root"
-            title={base}
+            aria-label="Filesystem root"
+            title={browseBase}
             disabled={selecting || resolving}
             onClick={() => setPath("")}
           >
@@ -193,7 +202,7 @@ export function WorkspacePicker({
             />{" "}
             Show hidden folders
           </label>
-          <span title={base}>Browse root: {base}</span>
+          <span title={browseBase}>Filesystem root: {browseBase}</span>
         </div>
         <div className="workspace-current">
           <FolderOpen />
@@ -227,7 +236,7 @@ export function WorkspacePicker({
               <button
                 key={entry.path}
                 disabled={selecting || resolving}
-                onClick={() => setPath(entry.path)}
+                onClick={() => void navigate(entry.path)}
               >
                 <Folder />
                 <span>

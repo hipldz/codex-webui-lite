@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { codexHome, config, route } from "./config.js";
 import { ensureWebInstructions } from "./web-instructions.js";
@@ -16,19 +17,13 @@ import { acceptedEncodings, actionRequestError, fileHeaders } from "./http-polic
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 await ensureWebInstructions();
-let workspaceFs = new WorkspaceFs(
-  config.workspaceExplicit ? config.workspace : config.workspaceBase,
-  config.workspaceBase,
-  config.workspaceExplicit,
-  false,
-  config.browseRootExplicit,
-);
+let workspaceFs = new WorkspaceFs(config.workspace, config.workspaceExplicit);
 try {
   await workspaceFs.init();
 } catch (error) {
   if (!config.workspaceExplicit) throw error;
   console.warn(`Ignoring invalid CODEX_WEB_DEFAULT_WORKSPACE (${config.workspace}):`, error);
-  workspaceFs = new WorkspaceFs(config.workspaceBase, config.workspaceBase);
+  workspaceFs = new WorkspaceFs(os.homedir());
   await workspaceFs.init();
 }
 const attachmentStore = new AttachmentStore();

@@ -578,7 +578,7 @@ export function Conversation({
           segment.type === "activity" ? (
             <ActivityGroup
               items={segment.items}
-              key={segment.id}
+              key={`${threadId}:${segment.id}`}
               workspace={workspace}
               sessionDirectory={sessionDirectory}
               inheritedDirectories={inheritedDirectories}

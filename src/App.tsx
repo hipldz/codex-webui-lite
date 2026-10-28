@@ -285,13 +285,19 @@ export function App() {
   const [settings, setSettings] = useState(false);
   const [changes, setChanges] = useState(false);
   const [workspacePicker, setWorkspacePicker] = useState(false);
+  const [workspaceSelecting, setWorkspaceSelecting] = useState(false);
+  const workspaceSelectingRef = useRef(false);
+  const onWorkspaceSelectingChange = useCallback((selecting: boolean) => {
+    workspaceSelectingRef.current = selecting;
+    setWorkspaceSelecting(selecting);
+  }, []);
   const [workspaceNotice, setWorkspaceNotice] = useState("");
   const [fileScope, setFileScope] = useState<FileScope>(
     initialFile ? initialFileScope : "workspace",
   );
   const [meta, setMeta] = useState({
     workspace: demo ? "/home/demo/project" : "",
-    workspaceBase: demo ? "/home/demo" : "",
+    workspaceBase: demo ? "/" : "",
     workspaceStart: demo ? "/home/demo" : "",
     workspaceToken: "",
     workspaceSelected: demo,
@@ -596,7 +602,7 @@ export function App() {
               {
                 type: "error",
                 id: `workspace-error:${thread.id}`,
-                message: `This session's workspace is unavailable: ${message.workspace.error}. Check that the folder exists and is within CODEX_WEB_BROWSE_ROOT.`,
+                message: `This session's workspace is unavailable: ${message.workspace.error}. Check that the folder exists and the service account can access it.`,
               },
               ...(message.items || []),
             ]
@@ -1008,7 +1014,7 @@ export function App() {
     !files ||
     window.dispatchEvent(new Event("codex:before-workspace-change", { cancelable: true }));
   const create = () => {
-    if (submitting.current || sessionLoadingRef.current) return;
+    if (submitting.current || sessionLoadingRef.current || workspaceSelectingRef.current) return;
     if (!mayChangeContext()) return;
     if (!demo && !beginSessionLoading("new", "Preparing new session")) return;
     setFiles(false);
@@ -1053,7 +1059,13 @@ export function App() {
     }
   };
   const select = (id: string) => {
-    if (submitting.current || sessionLoadingRef.current || id === activeRef.current?.id) return;
+    if (
+      submitting.current ||
+      sessionLoadingRef.current ||
+      workspaceSelectingRef.current ||
+      id === activeRef.current?.id
+    )
+      return;
     if (!mayChangeContext()) return;
     if (demo) {
       setFiles(false);
@@ -1078,7 +1090,15 @@ export function App() {
     send({ type: "thread.resume", threadId: id });
   };
   const branchFrom = (sourceTurnId: string) => {
-    if (!active || !sourceTurnId || running || queued || sessionLoadingRef.current) return;
+    if (
+      !active ||
+      !sourceTurnId ||
+      running ||
+      queued ||
+      sessionLoadingRef.current ||
+      workspaceSelectingRef.current
+    )
+      return;
     if (!mayChangeContext()) return;
     if (demo) {
       setFiles(false);
@@ -1107,6 +1127,7 @@ export function App() {
       send({ type: "thread.fork", threadId: active.id, turnId: sourceTurnId });
   };
   const mutateThread = (action: "archive" | "unarchive" | "delete", id: string) => {
+    if (workspaceSelectingRef.current) return;
     if (action !== "unarchive" && activeRef.current?.id === id && !mayChangeContext()) return;
     if (!demo) return send({ type: `thread.${action}`, threadId: id });
     const source = [...threads, ...archivedThreads];
@@ -1133,7 +1154,8 @@ export function App() {
     attachments: ComposerAttachment[],
     nextMode: CollaborationMode = mode,
   ) => {
-    if (running || submitting.current || sessionLoadingRef.current) return false;
+    if (running || submitting.current || sessionLoadingRef.current || workspaceSelectingRef.current)
+      return false;
     if (!activeRef.current && !metaRef.current.workspaceSelected) {
       setWorkspacePicker(true);
       return false;
@@ -1339,14 +1361,24 @@ export function App() {
               },
             };
           else if (message.type === "fs.delete") value = { file: { path: message.path } };
-          else if (message.type === "workspace.list")
-            value = message.path
-              ? [{ name: "project", path: `${message.path}/project`, type: "directory" }]
-              : [
-                  { name: "code", path: "code", type: "directory" },
-                  { name: "projects", path: "projects", type: "directory" },
-                ];
-          else if (message.scope === "thread")
+          else if (message.type === "workspace.list") {
+            const folders: Record<string, string[]> = {
+              "/": ["home", "srv", "tmp"],
+              "/home": ["demo"],
+              "/home/demo": ["project", "code", "projects", ".codex"],
+              "/home/demo/code": ["project"],
+              "/home/demo/projects": ["project"],
+              "/srv": ["project"],
+            };
+            const directory = message.path?.replace(/\/$/, "") || "/";
+            value = (folders[directory] || [])
+              .filter((name) => message.showHidden || !name.startsWith("."))
+              .map((name) => ({
+                name,
+                path: `${directory === "/" ? "" : directory}/${name}`,
+                type: "directory",
+              }));
+          } else if (message.scope === "thread")
             value = [{ name: "session-notes.md", path: "session-notes.md", type: "file" }];
           else
             value = message.path
@@ -1483,30 +1515,30 @@ export function App() {
   const resolveWorkspace = useCallback(
     async (path: string) => {
       if (demo) {
-        const base = metaRef.current.workspaceBase.replace(/\/$/, "");
+        const home = "/home/demo";
         const value = path;
         if (!value.trim()) throw new Error("Enter a folder path");
         const expanded =
-          value === "~" ? base : value.startsWith("~/") ? `${base}/${value.slice(2)}` : value;
+          value === "~" ? home : value.startsWith("~/") ? `${home}/${value.slice(2)}` : value;
         const parts: string[] = [];
-        for (const part of (expanded.startsWith("/") ? expanded : `${base}/${expanded}`).split(
-          "/",
-        )) {
+        for (const part of (expanded.startsWith("/") ? expanded : `/${expanded}`).split("/")) {
           if (!part || part === ".") continue;
           if (part === "..") parts.pop();
           else parts.push(part);
         }
         const absolute = `/${parts.join("/")}`;
-        if (absolute !== base && !absolute.startsWith(`${base}/`))
-          throw new Error("Folder is outside the browsing root");
-        return { path: absolute === base ? "" : absolute.slice(base.length + 1), absolute };
+        return { path: absolute.slice(1), absolute, base: "/" };
       }
       const result = await request<any>(`workspace-resolve:${path}`, {
         type: "workspace.resolve",
         path,
       });
       if (result.error || result.type === "error") throw new Error(result.error || result.message);
-      return { path: result.path as string, absolute: result.absolute as string };
+      return {
+        path: result.path as string,
+        absolute: result.absolute as string,
+        base: result.base as string,
+      };
     },
     [request],
   );
@@ -1521,7 +1553,7 @@ export function App() {
     if (demo) {
       setMeta((old) => ({
         ...old,
-        workspace: `${old.workspaceBase}/${path}`.replace(/\/$/, ""),
+        workspace: path,
         workspaceSelected: true,
       }));
       setFiles(false);
@@ -1635,6 +1667,7 @@ export function App() {
   };
   const openInteraction = useCallback(
     (id: string) => {
+      if (workspaceSelectingRef.current) return false;
       const item = items.find(
         (entry) => entry.id === id && (entry.type === "question" || entry.type === "approval"),
       );
@@ -1658,7 +1691,7 @@ export function App() {
       }
       return true;
     },
-    [items, active, files],
+    [items, active, files, workspaceSelecting],
   );
   useEffect(() => {
     const target = interactionToOpen.current;
@@ -1682,6 +1715,7 @@ export function App() {
   }, []);
   useEffect(() => {
     if (!notificationTarget) return;
+    if (workspaceSelectingRef.current) return;
     if (active?.id === notificationTarget.threadId) {
       if (notificationTarget.interactionId) openInteraction(notificationTarget.interactionId);
       setNotificationTarget(null);
@@ -1714,6 +1748,7 @@ export function App() {
   }, [
     notificationTarget,
     notificationRetry,
+    workspaceSelecting,
     active?.id,
     files,
     sessionLoading,
@@ -2079,6 +2114,7 @@ export function App() {
           base={meta.workspaceBase}
           start={meta.workspaceStart}
           active={Boolean(active)}
+          onSelectingChange={onWorkspaceSelectingChange}
           notice={workspaceNotice}
         />
       )}

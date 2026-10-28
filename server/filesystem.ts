@@ -108,10 +108,8 @@ export class WorkspaceFs {
   private selected = false;
   constructor(
     private requestedRoot: string,
-    private requestedBase = requestedRoot,
     selected = false,
     private sessionFiles = false,
-    private strictBase = false,
   ) {
     this.selected = selected;
   }
@@ -129,17 +127,13 @@ export class WorkspaceFs {
   async init() {
     this.root = await fs.realpath(this.requestedRoot);
     if (!(await fs.stat(this.root)).isDirectory()) throw new Error("Workspace must be a directory");
-    this.base = await fs.realpath(this.requestedBase);
-    if (!this.inside(this.base, this.root)) {
-      if (this.strictBase) throw new Error("Workspace is outside the configured browsing root");
-      this.base = path.dirname(this.root);
-    }
-    this.start = this.base;
+    this.base = path.parse(this.root).root;
+    this.start = this.root;
     try {
       const home = await fs.realpath(os.homedir());
       if (this.inside(this.base, home)) this.start = home;
     } catch {
-      /* Use the browsing root when the home directory is unavailable. */
+      /* Use the current directory when the home directory is unavailable. */
     }
   }
   get path() {
@@ -157,10 +151,7 @@ export class WorkspaceFs {
 
   /** An immutable request scope; never change another browser's workspace. */
   async scoped(candidate: string) {
-    const resolved = await fs.realpath(candidate);
-    if (!this.inside(this.base, resolved))
-      throw new Error("Workspace is outside the browsable root");
-    const scope = new WorkspaceFs(resolved, this.base, true);
+    const scope = new WorkspaceFs(candidate, true);
     await scope.init();
     return scope;
   }
@@ -199,13 +190,13 @@ export class WorkspaceFs {
     const resolved = await fs.realpath(
       path.isAbsolute(expanded) ? expanded : path.resolve(this.base, expanded),
     );
-    if (!this.inside(this.base, resolved)) throw new Error("Folder is outside the browsing root");
     if (!(await fs.stat(resolved)).isDirectory()) throw new Error("Choose a directory");
-    return { path: path.relative(this.base, resolved).replaceAll("\\", "/"), absolute: resolved };
+    const base = path.parse(resolved).root;
+    return { path: path.relative(base, resolved).replaceAll("\\", "/"), absolute: resolved, base };
   }
 
   async listWorkspaces(relative = "", showHidden = false) {
-    const dir = await this.safeFrom(this.base, relative);
+    const { absolute: dir } = await this.resolveWorkspace(relative || this.base);
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const folders = [];
     for (const entry of entries) {
@@ -213,8 +204,7 @@ export class WorkspaceFs {
       let directory = entry.isDirectory();
       if (entry.isSymbolicLink()) {
         try {
-          const target = await fs.realpath(path.join(dir, entry.name));
-          directory = this.inside(this.base, target) && (await fs.stat(target)).isDirectory();
+          directory = (await fs.stat(path.join(dir, entry.name))).isDirectory();
         } catch {
           directory = false;
         }
@@ -222,31 +212,11 @@ export class WorkspaceFs {
       if (directory)
         folders.push({
           name: entry.name,
-          path: path.posix.join(relative.replaceAll("\\", "/"), entry.name),
+          path: path.join(dir, entry.name).replaceAll("\\", "/"),
           type: "directory" as const,
         });
     }
     return folders.sort((a, b) => a.name.localeCompare(b.name));
-  }
-
-  async select(relative = "") {
-    const selected = await this.safeFrom(this.base, relative);
-    const stat = await fs.stat(selected);
-    if (!stat.isDirectory()) throw new Error("Workspace must be a directory");
-    this.root = selected;
-    this.selected = true;
-    return { path: this.root, relative: path.relative(this.base, this.root).replaceAll("\\", "/") };
-  }
-
-  async selectAbsolute(candidate: string) {
-    const resolved = await fs.realpath(candidate);
-    if (!this.inside(this.base, resolved))
-      throw new Error("Session workspace is outside the browsable root");
-    const stat = await fs.stat(resolved);
-    if (!stat.isDirectory()) throw new Error("Workspace must be a directory");
-    this.root = resolved;
-    this.selected = true;
-    return { path: this.root, relative: path.relative(this.base, this.root).replaceAll("\\", "/") };
   }
 
   async list(relative = "") {

@@ -207,6 +207,7 @@ const runningTurn = (thread: any) => {
 
 export class CodexController {
   private readonly workspaceKey = crypto.randomBytes(32);
+  private approvalGeneration = crypto.randomUUID();
   private pendingApprovals = new Map<string | number, { threadId?: string; item: any }>();
   private questions = new Map<
     string,
@@ -249,6 +250,7 @@ export class CodexController {
       () => [...this.runningThreads].filter((id) => !this.queue.status(id)).length,
     );
     codex.on("status", (status) => {
+      if (status === "starting") this.approvalGeneration = crypto.randomUUID();
       if (status === "stopped" || status === "error") {
         this.runningThreads.clear();
         this.activeTurns.clear();
@@ -356,6 +358,7 @@ export class CodexController {
       }
       const request = approval(message);
       if (request) {
+        request.id = `${this.approvalGeneration}:${request.id}`;
         this.pendingApprovals.set(request.requestId, {
           threadId: message.params?.threadId,
           item: request,
@@ -721,7 +724,7 @@ export class CodexController {
     if (!msg.scope || msg.scope === "workspace") return this.workspaceFor(msg);
     if (msg.scope !== "thread") throw new Error("Unknown file scope");
     const directory = await this.attachments.directoryFor(msg.threadId || "");
-    const scope = new WorkspaceFs(directory, directory, true, true);
+    const scope = new WorkspaceFs(directory, true, true);
     await scope.init();
     return scope;
   }
@@ -731,6 +734,7 @@ export class CodexController {
       ...this.defaultWorkspaceMeta(),
       workspace: scope.path,
       workspaceBase: scope.basePath,
+      workspaceStart: scope.browseStart,
       workspaceSelected: true,
       workspaceToken: this.workspaceToken(scope.path),
     };
@@ -1348,13 +1352,14 @@ export class CodexController {
           },
         ];
       if (msg.type === "workspace.select") {
-        const selectedScope = await this.fs.scoped(this.fs.basePath);
-        const selected = await selectedScope.select(msg.path || "");
+        const selected = await this.fs.resolveWorkspace(String(msg.path || this.fs.basePath));
+        const selectedScope = await this.fs.scoped(selected.absolute);
         const defaults = await this.readModelDefaults(selectedScope.path);
         return [
           {
             type: "workspace.selected",
-            ...selected,
+            path: selected.absolute,
+            relative: selected.path,
             ...this.workspaceMeta(selectedScope),
             ...defaults,
           },
