@@ -26,6 +26,24 @@ export type ComposerAttachment = {
 };
 type ComposerDraft = { text: string; attachments: ComposerAttachment[] };
 const hasDraft = (draft: ComposerDraft) => Boolean(draft.text || draft.attachments.length);
+
+function resizeComposerInput(element: HTMLTextAreaElement | null) {
+  if (!element) return;
+  const scrollTop = element.scrollTop;
+  element.style.height = "auto";
+  element.style.overflowY = "hidden";
+  if (!element.value) {
+    element.style.removeProperty("height");
+    element.scrollTop = 0;
+    return;
+  }
+  const maximum = Number.parseFloat(getComputedStyle(element).maxHeight) || 160;
+  element.style.height = `${Math.min(element.scrollHeight, maximum)}px`;
+  const overflowing = element.scrollHeight > element.clientHeight;
+  element.style.overflowY = overflowing ? "auto" : "hidden";
+  element.scrollTop = overflowing ? scrollTop : 0;
+}
+
 export type PermissionPreset = "ask" | "full" | "read-only" | "config";
 const textTypes = new Set([
   "text/plain",
@@ -260,12 +278,26 @@ export function Composer({
       parent.style.removeProperty("--composer-height");
     };
   }, []);
-  useEffect(() => {
-    if (area.current) {
-      area.current.style.height = "0";
-      area.current.style.height = `${Math.min(area.current.scrollHeight, 160)}px`;
-    }
+  useLayoutEffect(() => {
+    resizeComposerInput(area.current);
   }, [text]);
+  useEffect(() => {
+    const element = area.current;
+    if (!element) return;
+    const resize = () => resizeComposerInput(element);
+    let width = -1;
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry || entry.contentRect.width === width) return;
+      width = entry.contentRect.width;
+      resize();
+    });
+    observer.observe(element);
+    window.addEventListener("resize", resize);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
   useEffect(() => {
     if (!preview) return;
     const close = (event: KeyboardEvent) => event.key === "Escape" && setPreview(null);
