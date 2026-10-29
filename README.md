@@ -12,8 +12,8 @@ Codex 的登录状态、配置和 session 仍由 Codex 自己管理；Web UI 不
 - 创建、恢复、Branch、归档、取消归档、批量操作和删除 session
 - 当前 session 写入 `?session=<id>`，刷新页面后自动恢复
 - 用户授权后，任务成功完成、需要回答或审批时显示系统通知，点击可返回对应会话
-- 新对话默认使用 `CODEX_WEB_DEFAULT_WORKSPACE`；未配置或目录无效时手动选择 workspace；已有 session 自动恢复自己的 workspace
-- 从真实 `model/list` 读取模型与 reasoning effort
+- 新对话默认使用 `CODEX_WEB_DEFAULT_WORKSPACE`；未配置或目录无效时手动选择 workspace；已有 session 自动恢复自己的 workspace。输入框上方常驻 Folder 入口，显示当前目录并可打开选择器，完整路径可悬停查看；已有会话切换目录会开始新对话
+- 从真实 `model/list` 读取模型与 reasoning effort，输入框内提供独立的模型和 effort 选择器；切换模型时保留仍受支持的 effort，否则回退到新模型默认值
 - 流式显示回答、thinking、命令、文件修改、工具调用、网页搜索、图片、hook、子 agent、review、计划更新与警告
 - AI 回复在浏览器端渲染 Markdown/GFM，支持表格、任务列表、删除线与代码块
 - 每轮活动汇总为可展开的时间线；保留文件/命令摘要和历史 context compact 记录

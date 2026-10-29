@@ -662,8 +662,11 @@ export function App() {
             entry.id === thread.id ? { ...mergeThreadSummary(entry, thread), status } : entry,
           ),
         );
-        if (message.model) setModel(message.model);
-        if (message.effort) setEffort(message.effort);
+        // The first turn applies the selections made before creating the thread.
+        if (message.action !== "thread.create") {
+          if (message.model) setModel(message.model);
+          setEffort(message.effort || "");
+        }
       } else if (message.type === "history.items" && message.threadId === activeRef.current?.id) {
         setItems((old) => [
           ...message.items.filter((next: UiItem) => !old.some((item) => item.id === next.id)),
@@ -1584,8 +1587,6 @@ export function App() {
     archive: (id: string) => mutateThread("archive", id),
     unarchive: (id: string) => mutateThread("unarchive", id),
     remove: (id: string) => mutateThread("delete", id),
-    chooseWorkspace: () => setWorkspacePicker(true),
-    workspace: meta.workspaceSelected ? meta.workspace : "",
     pendingInteractions:
       demo && active
         ? items
@@ -2041,6 +2042,8 @@ export function App() {
             effort={effort}
             permission={permission}
             configPermissionLabel={configPermissionLabel}
+            workspace={meta.workspaceSelected ? meta.workspace : ""}
+            onChooseWorkspace={() => setWorkspacePicker(true)}
             threadUsage={threadUsage}
             compaction={compaction}
             onModel={setModel}

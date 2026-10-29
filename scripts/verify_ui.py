@@ -39,7 +39,7 @@ async def check_page(browser, viewport, name):
         assert await page.locator(".desktop-sidebar").evaluate("el => el.getBoundingClientRect().width") == 0
         await page.get_by_role("button", name="Open threads").click()
         await page.wait_for_timeout(220)
-        await page.locator(".workspace-switcher").click()
+        await page.locator(".workspace-trigger").click()
         await page.locator(".workspace-picker").wait_for()
         await page.screenshot(path=str(OUT / "desktop-workspace.png"), full_page=True)
         await page.get_by_role("button", name="Close workspace picker").click()
@@ -68,10 +68,12 @@ async def check_page(browser, viewport, name):
         await page.locator(".thread-tabs button").first.click()
         await page.locator(".model-trigger").click()
         await page.locator(".model-menu").wait_for()
-        slider = page.get_by_role("slider", name="Reasoning effort")
-        assert await slider.count() == 1
-        await slider.fill("3")
-        assert (await page.locator(".effort-title strong").inner_text()).lower() == "xhigh"
+        await page.locator(".model-trigger").click()
+        effort = page.get_by_role("combobox", name="Reasoning effort")
+        assert await effort.count() == 1
+        await effort.select_option("xhigh")
+        assert await effort.input_value() == "xhigh"
+        await page.locator(".model-trigger").click()
         await page.screenshot(path=str(OUT / "desktop-models.png"), full_page=True)
         await page.locator(".model-trigger").click()
         await page.get_by_role("button", name="New thread").first.click()

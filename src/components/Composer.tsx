@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   FileText,
+  FolderOpen,
   Paperclip,
   ShieldCheck,
   Square,
@@ -15,6 +16,7 @@ import {
 import type { CollaborationMode, ModelOption } from "../types";
 import type { CompactionStatus, ThreadUsage } from "./SettingsDrawer";
 import { ModelPicker } from "./ModelPicker";
+import { EffortPicker } from "./EffortPicker";
 
 export type ComposerAttachment = {
   id: string;
@@ -172,6 +174,8 @@ export function Composer({
   effort,
   permission,
   configPermissionLabel,
+  workspace,
+  onChooseWorkspace,
   threadUsage,
   compaction,
   onModel,
@@ -202,6 +206,8 @@ export function Composer({
   effort: string;
   permission: PermissionPreset;
   configPermissionLabel: string;
+  workspace: string;
+  onChooseWorkspace: () => void;
   threadUsage: ThreadUsage | null;
   compaction: CompactionStatus;
   onModel: (model: string) => void;
@@ -447,6 +453,11 @@ export function Composer({
     event.preventDefault();
     void addFiles(files);
   };
+  const workspacePath = workspace.replaceAll("\\", "/");
+  const workspaceParts = workspacePath.split("/").filter(Boolean);
+  const workspaceLabel =
+    workspaceParts.length > 2 ? `…/${workspaceParts.slice(-2).join("/")}` : workspacePath;
+  const selectedModel = models.find((item) => item.model === model || item.id === model);
   const contextPercent = threadUsage?.modelContextWindow
     ? Math.max(
         0,
@@ -482,6 +493,21 @@ export function Composer({
             <b>Answer ↑</b>
           </button>
         )}
+        <div className="composer-workspace">
+          <button
+            type="button"
+            className={`workspace-trigger${workspace ? "" : " unselected"}`}
+            disabled={addingFiles}
+            aria-label={workspace ? `Change working folder: ${workspace}` : "Choose working folder"}
+            title={workspace || "Choose working folder"}
+            onClick={onChooseWorkspace}
+          >
+            <FolderOpen aria-hidden="true" />
+            <span className="workspace-trigger-label">Folder</span>
+            <span className="workspace-trigger-path">{workspaceLabel || "Choose folder"}</span>
+            <ChevronDown aria-hidden="true" />
+          </button>
+        </div>
         <div className="composer">
           {alternateCount > 0 && (
             <button
@@ -603,6 +629,13 @@ export function Composer({
                 effort={effort}
                 onModel={onModel}
                 onEffort={onEffort}
+                disabled={disabled || running}
+              />
+              <EffortPicker
+                model={selectedModel}
+                effort={effort}
+                disabled={disabled || running}
+                onEffort={onEffort}
               />
               <button
                 type="button"
@@ -628,7 +661,6 @@ export function Composer({
                 disabled={running}
                 onPermission={onPermission}
               />
-              {effort && <span className="effort-chip">{effort}</span>}
             </div>
             <div className="composer-actions">
               {(contextPercent != null || compaction) && (

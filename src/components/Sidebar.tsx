@@ -2,8 +2,6 @@ import {
   Archive,
   ArchiveRestore,
   Check,
-  ChevronsUpDown,
-  FolderKanban,
   ListChecks,
   LoaderCircle,
   MoreHorizontal,
@@ -36,10 +34,8 @@ type Props = {
   archive: (id: string) => void;
   unarchive: (id: string) => void;
   remove: (id: string) => void;
-  chooseWorkspace: () => void;
   onCollapse?: () => void;
   onDismiss?: () => void;
-  workspace?: string;
   pendingInteractions?: PendingInteraction[];
   moreRecent?: boolean;
   moreArchived?: boolean;
@@ -55,16 +51,13 @@ export function Sidebar({
   archive,
   unarchive,
   remove,
-  chooseWorkspace,
   onCollapse,
   onDismiss,
-  workspace,
   pendingInteractions = [],
   moreRecent,
   moreArchived,
   loadMore,
 }: Props) {
-  const workspaceName = workspace?.split("/").filter(Boolean).pop() || "Choose workspace";
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"recent" | "archived">("recent");
   const [menu, setMenu] = useState<string>();
@@ -128,14 +121,6 @@ export function Sidebar({
           <PanelLeftClose />
         </button>
       </div>
-      <button className="workspace-switcher" onClick={chooseWorkspace}>
-        <FolderKanban />
-        <span>
-          <small>Workspace</small>
-          <b>{workspaceName}</b>
-        </span>
-        <ChevronsUpDown />
-      </button>
       <button className="new-thread" onClick={create}>
         <Plus />
         <span>New thread</span>

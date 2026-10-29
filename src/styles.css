@@ -145,55 +145,6 @@ svg {
   width: 17px;
   height: 17px;
 }
-.workspace-switcher {
-  width: 100%;
-  height: 44px;
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 14px;
-  align-items: center;
-  gap: 9px;
-  margin: 0 0 7px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.58);
-  color: #666762;
-  text-align: left;
-  cursor: pointer;
-}
-.workspace-switcher:hover {
-  border-color: var(--line-strong);
-  background: var(--surface);
-}
-.workspace-switcher > svg {
-  width: 15px;
-  height: 15px;
-}
-.workspace-switcher > svg:last-child {
-  width: 12px;
-  height: 12px;
-  color: #9a9b95;
-}
-.workspace-switcher > span {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.workspace-switcher small {
-  color: #969791;
-  font-size: 7px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.workspace-switcher b {
-  overflow: hidden;
-  font-size: 9.5px;
-  font-weight: 570;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
 .new-thread {
   height: 42px;
   display: flex;
@@ -1552,6 +1503,59 @@ svg {
   background: linear-gradient(transparent, var(--bg) 34%);
   pointer-events: none;
 }
+.composer-workspace {
+  width: min(100%, 790px);
+  display: flex;
+  margin: 0 auto 8px;
+  pointer-events: auto;
+}
+.workspace-trigger {
+  max-width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.workspace-trigger:hover {
+  border-color: var(--line-strong);
+  background: var(--soft);
+}
+.workspace-trigger:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.workspace-trigger > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--muted);
+}
+.workspace-trigger > svg:last-child {
+  width: 12px;
+  height: 12px;
+}
+.workspace-trigger-label {
+  color: var(--muted);
+}
+.workspace-trigger-path {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.workspace-trigger.unselected {
+  border-color: color-mix(in srgb, var(--blue) 30%, var(--line));
+  color: var(--blue);
+}
 .composer {
   width: min(100%, 790px);
   min-height: 111px;
@@ -1603,18 +1607,22 @@ svg {
   color: #a2a39e;
 }
 .composer-toolbar {
-  height: 34px;
+  min-height: 34px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
 .composer-tools {
   min-width: 0;
+  flex: 1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
 }
 .composer-actions {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1673,13 +1681,58 @@ svg {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.effort-chip {
-  padding: 4px 7px;
-  border-radius: 7px;
-  background: #f0f0ec;
-  color: #858680;
-  font-size: 7.5px;
-  text-transform: capitalize;
+.model-trigger:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.effort-control {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  color: var(--muted);
+}
+.effort-control > svg {
+  position: absolute;
+  left: 8px;
+  width: 13px;
+  height: 13px;
+  pointer-events: none;
+}
+.effort-control > svg:last-child {
+  right: 6px;
+  left: auto;
+  width: 12px;
+  height: 12px;
+}
+.effort-control select {
+  height: 34px;
+  max-width: 135px;
+  padding: 0 23px 0 28px;
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.effort-control select:hover:not(:disabled),
+.effort-control select:focus-visible {
+  background: var(--soft);
+}
+.effort-control select:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.effort-control select:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.effort-control option {
+  background: var(--surface);
+  color: var(--ink);
 }
 .permission-control {
   min-width: 0;
@@ -1984,6 +2037,7 @@ svg {
 }
 .model-menu {
   position: absolute;
+  z-index: 35;
   bottom: 39px;
   left: -38px;
   width: 370px;
@@ -2054,95 +2108,6 @@ svg {
   height: 14px;
   color: #356fbe;
 }
-.effort-title {
-  margin-top: 5px;
-  border-top: 1px solid var(--line);
-}
-.effort-title strong {
-  margin-left: auto;
-  padding: 3px 7px;
-  border-radius: 7px;
-  background: #eef2f7;
-  color: #396da9;
-  font-size: 7px;
-  font-weight: 650;
-  text-transform: capitalize;
-}
-.effort-slider {
-  position: relative;
-  padding: 9px 14px 10px;
-}
-.effort-range {
-  width: 100%;
-  height: 18px;
-  display: block;
-  margin: 0;
-  appearance: none;
-  -webkit-appearance: none;
-  outline: 0;
-  background: transparent;
-  cursor: pointer;
-}
-.effort-range::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 4px;
-  background: linear-gradient(
-    90deg,
-    #4c82c7 var(--effort-progress),
-    #e2e3df var(--effort-progress)
-  );
-}
-.effort-range::-moz-range-track {
-  height: 4px;
-  border-radius: 4px;
-  background: #e2e3df;
-}
-.effort-range::-moz-range-progress {
-  height: 4px;
-  border-radius: 4px;
-  background: #4c82c7;
-}
-.effort-range::-webkit-slider-thumb {
-  width: 16px;
-  height: 16px;
-  margin-top: -6px;
-  appearance: none;
-  -webkit-appearance: none;
-  border: 3px solid #fff;
-  border-radius: 50%;
-  background: #3976bd;
-  box-shadow:
-    0 0 0 1px #3976bd,
-    0 2px 5px rgba(32, 67, 105, 0.22);
-}
-.effort-range::-moz-range-thumb {
-  width: 11px;
-  height: 11px;
-  border: 3px solid #fff;
-  border-radius: 50%;
-  background: #3976bd;
-  box-shadow: 0 0 0 1px #3976bd;
-}
-.effort-marks {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 1px;
-}
-.effort-marks button {
-  min-width: 44px;
-  padding: 7px 0 0;
-  border: 0;
-  background: transparent;
-  color: #999a95;
-  font-size: 7px;
-  text-transform: capitalize;
-  cursor: pointer;
-}
-.effort-marks button.active {
-  color: #356cae;
-  font-weight: 650;
-}
-
 .chat-main.is-empty .conversation {
   overflow: hidden;
 }
@@ -4065,9 +4030,6 @@ svg {
   .model-trigger > svg:first-child {
     display: none;
   }
-  .effort-chip {
-    display: none;
-  }
   .permission-control > span {
     display: none;
   }
@@ -4240,7 +4202,6 @@ svg {
   .new-thread:hover {
     background: #fff;
   }
-  .workspace-switcher,
   .thread-tabs button.active,
   .workspace-icon,
   .activity-icon,
@@ -4334,24 +4295,9 @@ svg {
   .model-menu > button.selected {
     background: #2c333d;
   }
-  .effort-chip {
-    background: #2a2b28;
-  }
   .permission-control select {
     background: #2a2b28;
   }
-  .effort-title strong {
-    background: #29323d;
-    color: #8db5e7;
-  }
-  .effort-range::-webkit-slider-runnable-track {
-    background: linear-gradient(
-      90deg,
-      #6e9dd4 var(--effort-progress),
-      #3b3d38 var(--effort-progress)
-    );
-  }
-  .effort-range::-moz-range-track,
   .usage-meter {
     background: #3b3d38;
   }
@@ -4454,10 +4400,6 @@ svg {
 }
 
 /* Keep the interface compact, but use comfortable reading sizes on modern displays. */
-.workspace-switcher small {
-  font-size: 8px;
-}
-.workspace-switcher b,
 .model-trigger {
   font-size: 10.5px;
 }
@@ -4602,11 +4544,6 @@ svg {
   width: 14px;
   height: 14px;
   color: #356fbe;
-}
-.effort-chip {
-  padding: 5px 8px;
-  font-size: 10px;
-  font-weight: 550;
 }
 .tool-copy small,
 .thinking-live span,
@@ -5257,9 +5194,12 @@ a:focus-visible {
     gap: 2px;
     flex: 1;
   }
+  .composer-toolbar {
+    align-items: flex-end;
+  }
   .composer-tools .model-control {
     min-width: 0;
-    flex: 1;
+    flex: 1 1 100px;
   }
   .composer-tools .model-trigger {
     width: 100%;
@@ -5270,6 +5210,12 @@ a:focus-visible {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .effort-control > svg:first-child {
+    display: none;
+  }
+  .effort-control select {
+    padding-left: 7px;
   }
   .composer-tools .permission-trigger {
     padding: 0 5px;
