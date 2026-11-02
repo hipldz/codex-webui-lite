@@ -21,9 +21,13 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
   const hydrating = useRef(0);
   const epoch = useRef(0);
   const threadListVersion = useRef(0);
+  const turnReceipts = useRef(new Map<string, (data: { messages: any[] }) => void>());
 
   const request = useCallback(async (url: string, init?: RequestInit, timeout = 12_000) => {
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (init?.signal?.aborted) abort();
+    else init?.signal?.addEventListener("abort", abort, { once: true });
     requests.current.add(controller);
     const timer = window.setTimeout(() => controller.abort(), timeout);
     try {
@@ -33,6 +37,7 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
       return data;
     } finally {
       window.clearTimeout(timer);
+      init?.signal?.removeEventListener("abort", abort);
       requests.current.delete(controller);
     }
   }, []);
@@ -53,6 +58,8 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
     }
     if (message.type === "thread.mutated") threadListVersion.current++;
     handler.current(message);
+    if (["turn.queued", "turn.accepted", "turn.failed"].includes(message.type))
+      turnReceipts.current.get(message.messageId)?.({ messages: [message] });
   }, []);
 
   useEffect(() => {
@@ -302,21 +309,50 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
       const listVersion = threadListVersion.current;
       const hydrate = ["thread.resume", "thread.fork"].includes(message.type);
       const stamp = hydrate ? ++epoch.current : epoch.current;
+      const controller = new AbortController();
+      const receiptId = message.type === "turn.send" ? message.clientUserMessageId : undefined;
       if (hydrate) {
         hydrating.current++;
         pauseStream.current();
       }
       try {
-        const data = await request(
+        const receipt = receiptId
+          ? new Promise<{ messages: any[] }>((resolve) => {
+              turnReceipts.current.set(receiptId, resolve);
+            })
+          : undefined;
+        const body = JSON.stringify(message);
+        const response = request(
           `${apiBase()}/actions`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(message),
+            body,
+            signal: controller.signal,
           },
-          120_000,
+          // Creating a session and enqueuing a turn should be quick.
+          // Allow more time for large uploads without leaving small requests stuck.
+          ["turn.send", "thread.create"].includes(message.type)
+            ? body.length > 512 * 1024
+              ? 60_000
+              : 15_000
+            : 120_000,
         );
+        // The event stream can acknowledge a send before its HTTP response arrives.
+        const data = receipt ? await Promise.race([response, receipt]) : await response;
         const messages = data.messages || [];
+        if (
+          receiptId &&
+          !messages.some((item: any) =>
+            ["turn.queued", "turn.accepted", "turn.failed", "error"].includes(item.type),
+          )
+        )
+          throw new Error("The server did not confirm message delivery. Your draft is preserved.");
+        if (
+          message.type === "thread.create" &&
+          !messages.some((item: any) => item.type === "thread.active" || item.type === "error")
+        )
+          throw new Error("The server did not confirm session creation. Your draft is preserved.");
         for (const item of messages) {
           if (item.type === "threads" && listVersion !== threadListVersion.current) continue;
           if (hydrate && item.type === "thread.active") {
@@ -335,6 +371,7 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
           }
           deliver({
             ...item,
+            ...(receiptId && item.type === "error" ? { messageId: receiptId } : {}),
             action: item.action || message.type,
             requestId: item.requestId ?? message.requestId,
             requestThreadId: message.threadId,
@@ -345,7 +382,11 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
         const detail =
           error instanceof Error && error.name !== "AbortError"
             ? error.message
-            : "Request timed out or connection interrupted; retry to check the result";
+            : message.type === "turn.send"
+              ? "Message delivery was not confirmed. Your draft is preserved; retry to check the result."
+              : message.type === "thread.create"
+                ? "Session creation was not confirmed. Your draft is preserved; retry to continue."
+                : "Request timed out or connection interrupted; retry to check the result";
         const type =
           (
             {
@@ -372,6 +413,8 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
         deliver(failed);
         return [failed];
       } finally {
+        if (receiptId) turnReceipts.current.delete(receiptId);
+        controller.abort();
         if (hydrate) hydrating.current--;
         wake.current();
       }

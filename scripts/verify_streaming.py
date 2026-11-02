@@ -15,8 +15,8 @@ async def main():
         await page.goto(BASE, wait_until="domcontentloaded")
         await page.locator(".connection.online").wait_for(timeout=10_000)
         await page.locator(".model-trigger").click()
-        await page.locator(".model-menu > button").first.wait_for(timeout=10_000)
-        model_count = await page.locator(".model-menu > button").count()
+        await page.locator('.model-menu [role="option"]').first.wait_for(timeout=10_000)
+        model_count = await page.locator('.model-menu [role="option"]').count()
         await page.locator(".model-trigger").click()
         await page.get_by_role("button", name="New thread").first.click()
         if await page.locator(".workspace-picker").count():

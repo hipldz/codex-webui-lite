@@ -17,6 +17,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FileScope, QuestionAnswers, UiItem } from "../types";
+import { getTurnProgress } from "../thread-status";
 import { visibleUserText } from "../user-message";
 import {
   markdownUrlTransform,
@@ -124,6 +125,7 @@ function StatusLine({ item }: { item: Extract<UiItem, { type: "status" }> }) {
 
 type ActivityGroupProps = {
   items: ActivityItem[];
+  active: boolean;
   workspace: string;
   sessionDirectory: string;
   inheritedDirectories: string[];
@@ -135,13 +137,8 @@ type ActivityGroupProps = {
 };
 
 const ActivityGroup = memo(
-  function ActivityGroup({ items, ...context }: ActivityGroupProps) {
+  function ActivityGroup({ items, active, ...context }: ActivityGroupProps) {
     const [open, setOpen] = useState(false);
-    const active = items.some(
-      (item) =>
-        ((item.type === "thinking" || item.type === "command") && item.status === "running") ||
-        (item.type === "assistant_message" && item.streaming),
-    );
     const count = (type: ActivityItem["type"]) => items.filter((item) => item.type === type).length;
     const failed = items.filter(
       (item) => item.type === "command" && item.status === "error",
@@ -196,6 +193,7 @@ const ActivityGroup = memo(
     );
   },
   (before, after) =>
+    before.active === after.active &&
     before.items.length === after.items.length &&
     before.items.every((item, index) => item === after.items[index]) &&
     before.workspace === after.workspace &&
@@ -416,6 +414,7 @@ const MarkdownBody = memo(function MarkdownBody({
 export function Conversation({
   items,
   threadId,
+  activeTurnId,
   running,
   queued = false,
   retry,
@@ -437,6 +436,7 @@ export function Conversation({
 }: {
   items: UiItem[];
   threadId: string;
+  activeTurnId?: string;
   running: boolean;
   queued?: boolean;
   retry?: (id: string) => void;
@@ -477,11 +477,28 @@ export function Conversation({
       ),
     [items],
   );
+  const progress = useMemo(
+    () => getTurnProgress({ items, running, queued, turnId: activeTurnId }),
+    [items, running, queued, activeTurnId],
+  );
+  const activeActivityId = useMemo(() => {
+    if (progress.phase !== "working") return;
+    // Earlier groups can retain stale running items, including before an answer
+    // steered into the same turn. Only the trailing group represents live work.
+    const segment = segments.at(-1);
+    if (segment?.type !== "activity") return;
+    const currentIds = new Set(progress.items.map((item) => item.id));
+    if (segment.items.some((item) => currentIds.has(item.id))) return segment.id;
+  }, [segments, progress]);
+  const showProgress =
+    progress.phase === "queued" ||
+    progress.phase === "starting" ||
+    (progress.phase === "working" && !activeActivityId);
   const branchableItems = useMemo(() => {
     const result = new Set<string>();
     const turns = new Set<string>();
     // Finishing one reply does not finish the turn; hide all branch actions while busy.
-    if (running || queued) return result;
+    if (running || queued || disabled) return result;
     for (let index = items.length - 1; index >= 0; index--) {
       const item = items[index];
       if (
@@ -494,14 +511,11 @@ export function Conversation({
       }
     }
     return result;
-  }, [items, running, queued]);
+  }, [items, running, queued, disabled]);
   const latestPlan = [...items].reverse().find((item) => item.type === "plan");
   const lastUserIndex = items.reduce(
     (last, item, index) => (item.type === "user_message" ? index : last),
     -1,
-  );
-  const pendingQuestion = items.some(
-    (item) => item.type === "question" && item.status === "pending",
   );
   const blockingQuestion = items.some(
     (item) => item.type === "question" && item.status === "pending" && item.blocking,
@@ -590,6 +604,7 @@ export function Conversation({
           segment.type === "activity" ? (
             <ActivityGroup
               items={segment.items}
+              active={segment.id === activeActivityId}
               key={`${threadId}:${segment.id}`}
               workspace={workspace}
               sessionDirectory={sessionDirectory}
@@ -674,6 +689,11 @@ export function Conversation({
                 ) : null}
                 {segment.item.text && <UserMessageText text={segment.item.text} />}
                 <MessageTime value={segment.item.timestamp} />
+                {segment.item.delivery === "sending" && (
+                  <small className="delivery-state" role="status">
+                    Sending…
+                  </small>
+                )}
                 {segment.item.delivery === "queued" && (
                   <small className="delivery-state">Waiting in queue</small>
                 )}
@@ -824,25 +844,27 @@ export function Conversation({
             </div>
           ) : null,
         )}
-        {running &&
-          !pendingQuestion &&
-          !items.some(
-            (item) =>
-              (item.type === "thinking" && item.status === "running") ||
-              (item.type === "assistant_message" && item.streaming),
-          ) && (
-            <div className="thinking-live">
-              <LoaderCircle />
-              <div>
-                <b>{queued ? "Queued" : "Starting"}</b>
-                <span>
-                  {queued
-                    ? "Waiting for another task to finish. You can cancel with Stop."
-                    : "Codex is preparing the turn"}
-                </span>
-              </div>
+        {showProgress && (
+          <div className="thinking-live" role="status">
+            <LoaderCircle />
+            <div>
+              <b>
+                {progress.phase === "queued"
+                  ? "Queued"
+                  : progress.phase === "starting"
+                    ? "Starting"
+                    : "Working"}
+              </b>
+              <span>
+                {progress.phase === "queued"
+                  ? "Waiting for another task to finish. You can cancel with Stop."
+                  : progress.phase === "starting"
+                    ? "Codex is preparing the turn"
+                    : "Waiting for the next update"}
+              </span>
             </div>
-          )}
+          </div>
+        )}
       </div>
       {previewImage && (
         <div

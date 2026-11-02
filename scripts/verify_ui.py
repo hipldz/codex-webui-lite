@@ -69,10 +69,11 @@ async def check_page(browser, viewport, name):
         await page.locator(".model-trigger").click()
         await page.locator(".model-menu").wait_for()
         await page.locator(".model-trigger").click()
-        effort = page.get_by_role("combobox", name="Reasoning effort")
+        effort = page.locator(".effort-trigger")
         assert await effort.count() == 1
-        await effort.select_option("xhigh")
-        assert await effort.input_value() == "xhigh"
+        await effort.click()
+        await page.locator(".effort-menu").get_by_role("option", name="Extra high").click()
+        assert await effort.get_attribute("aria-label") == "Reasoning effort: Extra high"
         await page.locator(".model-trigger").click()
         await page.screenshot(path=str(OUT / "desktop-models.png"), full_page=True)
         await page.locator(".model-trigger").click()

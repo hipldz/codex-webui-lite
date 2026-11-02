@@ -262,6 +262,7 @@ export function App() {
   const [permissionSaving, setPermissionSaving] = useState(false);
   const [permissionError, setPermissionError] = useState("");
   const [running, setRunning] = useState(false);
+  const [sending, setSending] = useState(false);
   const [turnId, setTurnId] = useState<string>();
   const [queued, setQueued] = useState(false);
   const submitting = useRef(false);
@@ -423,6 +424,21 @@ export function App() {
     [notifyInteraction],
   );
 
+  const syncInteractions = useCallback(
+    (snapshot: PendingInteraction[]) => {
+      const newlyPending = snapshot.filter(
+        (item) =>
+          !pendingInteractionsRef.current.some(
+            (old) =>
+              old.threadId === item.threadId && old.id === item.id && old.type === item.type,
+          ),
+      );
+      commitInteractions(snapshot);
+      for (const item of newlyPending) notifyPendingInteraction(item);
+    },
+    [commitInteractions, notifyPendingInteraction],
+  );
+
   const updateInteractions = useCallback(
     (threadId: string, incoming: UiItem[]) => {
       const interactions = incoming.filter(
@@ -477,7 +493,7 @@ export function App() {
         return;
       }
       if (message.type === "interactions.snapshot") {
-        commitInteractions(message.interactions || []);
+        syncInteractions(message.interactions || []);
       } else if (message.type === "status") {
         const previous = metaRef.current.codexStatus;
         setMeta((old) => ({
@@ -606,17 +622,7 @@ export function App() {
           setEffort(nextEffort);
         }
       } else if (message.type === "thread.active") {
-        if (message.pendingInteractions) {
-          const snapshot: PendingInteraction[] = message.pendingInteractions;
-          const newlyPending = snapshot.filter(
-            (item) =>
-              !pendingInteractionsRef.current.some(
-                (old) => old.threadId === item.threadId && old.id === item.id,
-              ),
-          );
-          commitInteractions(snapshot);
-          for (const item of newlyPending) notifyPendingInteraction(item);
-        }
+        if (message.pendingInteractions) syncInteractions(message.pendingInteractions);
         const thread = mergeThreadSummary(
           activeRef.current?.id === message.thread.id ? activeRef.current : undefined,
           message.thread,
@@ -984,6 +990,7 @@ export function App() {
       beginSessionLoading,
       notifyTaskComplete,
       notifyPendingInteraction,
+      syncInteractions,
       updateInteractions,
       commitInteractions,
     ],
@@ -1217,8 +1224,11 @@ export function App() {
       return false;
     }
     submitting.current = true;
-    setRunning(true);
+    setSending(true);
     setQueued(false);
+    setTurnId(undefined);
+    let submittedThreadId = activeRef.current?.id || "";
+    let submittedMessageId = "";
     try {
       let thread = activeRef.current;
       if (!thread && !demo) {
@@ -1235,7 +1245,7 @@ export function App() {
           return false;
         }
       }
-      setRunning(true);
+      submittedThreadId = thread?.id || "";
       if (thread && !thread.name && (!thread.preview || thread.preview === "New thread")) {
         const preview = (
           text.trim().replace(/\s+/g, " ") || attachments.map((item) => item.name).join(", ")
@@ -1260,6 +1270,7 @@ export function App() {
       ]);
       const localId =
         lastAttempt.current?.signature === signature ? lastAttempt.current.id : crypto.randomUUID();
+      submittedMessageId = localId;
       lastAttempt.current = { signature, id: localId };
       outgoing.current.set(localId, {
         id: localId,
@@ -1283,6 +1294,14 @@ export function App() {
       );
       setScrollRequest((value) => value + 1);
       if (demo) {
+        setRunning(true);
+        setItems((old) =>
+          old.map((item) =>
+            item.id === localId && item.type === "user_message"
+              ? { ...item, delivery: "sent" }
+              : item,
+          ),
+        );
         if (nextMode === "plan") {
           setMode("plan");
           setItems((old) =>
@@ -1340,9 +1359,32 @@ export function App() {
       if (accepted) {
         lastAttempt.current = null;
         setMode(nextMode);
-      } else setRunning(false);
+      } else if (activeRef.current?.id === submittedThreadId) {
+        setRunning(false);
+        setQueued(false);
+        setTurnId(undefined);
+      }
       return accepted;
+    } catch (error) {
+      if (activeRef.current?.id === submittedThreadId) {
+        setRunning(false);
+        setQueued(false);
+        setTurnId(undefined);
+        setItems((old) =>
+          old.map((item) =>
+            item.id === submittedMessageId && item.type === "user_message"
+              ? {
+                  ...item,
+                  delivery: "failed",
+                  failure: error instanceof Error ? error.message : "Could not send message",
+                }
+              : item,
+          ),
+        );
+      }
+      throw error;
     } finally {
+      setSending(false);
       submitting.current = false;
     }
   };
@@ -1910,17 +1952,21 @@ export function App() {
             <div className="thread-heading">
               <strong>{title}</strong>
               <span>
-                {queued
-                  ? "Waiting in queue"
-                  : approvals.length
-                    ? "Waiting for approval"
-                    : blockingQuestion
-                      ? "Waiting for your answer"
-                      : running
-                        ? "Codex is working"
-                        : meta.workspaceSelected
-                          ? meta.workspace.split("/").filter(Boolean).pop()
-                          : "Choose a workspace"}
+                {sending
+                  ? active
+                    ? "Sending message…"
+                    : "Creating session…"
+                  : queued
+                    ? "Waiting in queue"
+                    : approvals.length
+                      ? "Waiting for approval"
+                      : blockingQuestion
+                        ? "Waiting for your answer"
+                        : running
+                          ? "Codex is working"
+                          : meta.workspaceSelected
+                            ? meta.workspace.split("/").filter(Boolean).pop()
+                            : "Choose a workspace"}
               </span>
             </div>
           </div>
@@ -2019,6 +2065,7 @@ export function App() {
           <Conversation
             items={items}
             threadId={active?.id || ""}
+            activeTurnId={turnId}
             running={running}
             queued={queued}
             retry={(id) => {
@@ -2049,6 +2096,7 @@ export function App() {
             openFile={openWorkspaceFile}
             branch={branchFrom}
             disabled={
+              sending ||
               permissionSaving ||
               ((!connected || meta.codexStatus !== "ready" || Boolean(sessionLoading)) && !demo)
             }
@@ -2078,9 +2126,11 @@ export function App() {
             onAnswerQuestion={jumpToQuestion}
             onReviewApproval={() => approvals[0] && openInteraction(approvals[0].id)}
             running={running}
+            sending={sending}
             queued={queued}
             restoreDraft={restoreDraft}
             disabled={
+              sending ||
               permissionSaving ||
               ((!connected || meta.codexStatus !== "ready" || Boolean(sessionLoading)) && !demo)
             }

@@ -1602,136 +1602,77 @@ svg {
   align-items: center;
   gap: 8px;
 }
-.attach-button,
-.model-trigger {
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
 .attach-button {
   width: 31px;
   height: 31px;
   display: grid;
   place-items: center;
   padding: 0;
+  border: 0;
   border-radius: 8px;
-  color: #6f706b;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
 }
-.attach-button:hover,
-.model-trigger:hover,
-.model-trigger[aria-expanded="true"] {
+.attach-button:hover {
   background: var(--soft);
 }
 .attach-button svg {
   width: 15px;
   height: 15px;
 }
-.model-control {
+.composer-picker {
   position: relative;
   min-width: 0;
+  flex: none;
 }
-.model-trigger {
-  height: 31px;
+.composer-picker-trigger {
+  height: 34px;
   max-width: 230px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   padding: 0 8px;
-  border-radius: 8px;
-  color: #5a5b56;
-  font-size: 9.5px;
-}
-.model-trigger > svg:first-child {
-  width: 13px;
-  height: 13px;
-  color: #7b7c76;
-}
-.model-trigger .trigger-chevron {
-  width: 12px;
-  height: 12px;
-  color: #92938d;
-}
-.model-trigger span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.model-trigger:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.effort-control {
-  position: relative;
-  display: flex;
-  flex: none;
-  align-items: center;
-  color: var(--muted);
-}
-.effort-control > svg {
-  position: absolute;
-  left: 8px;
-  width: 13px;
-  height: 13px;
-  pointer-events: none;
-}
-.effort-control > svg:last-child {
-  right: 6px;
-  left: auto;
-  width: 12px;
-  height: 12px;
-}
-.effort-control select {
-  height: 34px;
-  max-width: 135px;
-  padding: 0 23px 0 28px;
-  appearance: none;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
-  color: var(--ink);
+  color: var(--muted);
   font: inherit;
   font-size: 10.5px;
   cursor: pointer;
 }
-.effort-control select:hover:not(:disabled),
-.effort-control select:focus-visible {
+.composer-picker-trigger:hover:not(:disabled),
+.composer-picker-trigger[aria-expanded="true"] {
   background: var(--soft);
+  color: var(--ink);
 }
-.effort-control select:focus-visible {
+.composer-picker-trigger:focus-visible,
+.attach-button:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
-.effort-control select:disabled {
+.composer-picker-trigger:disabled {
   opacity: 0.55;
   cursor: default;
 }
-.effort-control option {
-  background: var(--surface);
-  color: var(--ink);
+.composer-picker-trigger > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
 }
-.permission-control {
+.composer-picker-trigger .trigger-chevron {
+  width: 10px;
+  height: 10px;
+  color: var(--faint);
+}
+.composer-picker-trigger > span {
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 7.5px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-.permission-control select {
-  max-width: 122px;
-  height: 25px;
-  padding: 0 19px 0 6px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  outline: 0;
-  background: var(--soft);
-  color: var(--ink);
-  font-size: 8px;
-  cursor: pointer;
-}
-.permission-control select:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
+.effort-trigger {
+  max-width: 135px;
 }
 .send {
   width: 33px;
@@ -1764,6 +1705,9 @@ svg {
   width: 11px;
   height: 11px;
   fill: currentColor;
+}
+.send .lucide-loader-circle {
+  animation: spin 1s linear infinite;
 }
 .composer-hint {
   padding-top: 7px;
@@ -2010,78 +1954,96 @@ svg {
   width: 17px;
   height: 17px;
 }
-.model-menu {
+.composer-picker-menu {
   position: absolute;
   z-index: 35;
-  bottom: 39px;
-  left: -38px;
-  width: 370px;
+  bottom: 42px;
+  left: 0;
+  width: 280px;
+  max-width: calc(100vw - 28px);
   max-height: min(470px, 62vh);
   overflow: auto;
   padding: 7px;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
-  background: #fff;
-  box-shadow:
-    0 24px 70px rgba(24, 24, 18, 0.17),
-    0 3px 10px rgba(24, 24, 18, 0.05);
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
-.model-menu-title {
-  height: 29px;
+.model-menu {
+  width: 370px;
+}
+.permission-menu {
+  right: 0;
+  left: auto;
+}
+.composer-picker-title {
+  min-height: 29px;
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 0 8px;
-  color: #8b8c86;
-  font-size: 8px;
-  font-weight: 650;
-  letter-spacing: 0.065em;
-  text-transform: uppercase;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
 }
-.model-menu-title svg {
-  width: 12px;
-  height: 12px;
+.composer-picker-title svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
 }
-.model-menu > button {
+.composer-picker-note {
+  display: block;
+  padding: 2px 8px 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.composer-picker-menu [role="option"] {
   width: 100%;
-  min-height: 52px;
+  min-height: 48px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 8px 9px;
   border: 0;
   border-radius: 9px;
   background: transparent;
+  color: var(--ink);
   text-align: left;
   cursor: pointer;
 }
-.model-menu > button:hover {
-  background: #f4f4f1;
+.composer-picker-menu [role="option"]:hover,
+.composer-picker-menu [role="option"]:focus-visible {
+  background: var(--soft);
 }
-.model-menu > button.selected {
-  background: #eff2f5;
+.composer-picker-menu [role="option"]:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
 }
-.model-menu > button > span {
+.composer-picker-menu [aria-selected="true"] {
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+}
+.composer-picker-menu [role="option"] > span {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
-.model-menu > button b {
-  font-size: 10px;
+.composer-picker-menu b {
+  font-size: 11.5px;
   font-weight: 600;
 }
-.model-menu > button small {
-  overflow: hidden;
-  color: #858680;
-  font-size: 8px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.composer-picker-menu [role="option"] small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
-.model-menu > button > svg {
+.composer-picker-menu [role="option"] > svg {
   width: 14px;
   height: 14px;
-  color: #356fbe;
+  flex: none;
+  color: var(--blue);
 }
 .chat-main.is-empty .conversation {
   overflow: hidden;
@@ -3951,19 +3913,6 @@ svg {
   .composer-hint {
     display: none;
   }
-  .model-trigger {
-    max-width: 160px;
-    padding: 0 5px;
-  }
-  .model-trigger > svg:first-child {
-    display: none;
-  }
-  .permission-control > span {
-    display: none;
-  }
-  .permission-control select {
-    max-width: 108px;
-  }
   .send {
     width: 34px;
     height: 34px;
@@ -4131,7 +4080,6 @@ svg {
   .workspace-icon,
   .activity-icon,
   .composer,
-  .model-menu,
   .file-drawer,
   .settings,
   .preview-pane,
@@ -4213,15 +4161,6 @@ svg {
   }
   .composer-wrap {
     background: linear-gradient(transparent, var(--bg) 34%);
-  }
-  .model-menu > button:hover {
-    background: #292a27;
-  }
-  .model-menu > button.selected {
-    background: #2c333d;
-  }
-  .permission-control select {
-    background: #2a2b28;
   }
   .usage-meter {
     background: #3b3d38;
@@ -4325,9 +4264,6 @@ svg {
 }
 
 /* Keep the interface compact, but use comfortable reading sizes on modern displays. */
-.model-trigger {
-  font-size: 10.5px;
-}
 .search-threads input {
   font-size: 11px;
 }
@@ -4373,105 +4309,6 @@ svg {
 .attach-button {
   width: 34px;
   height: 34px;
-}
-.model-trigger {
-  height: 34px;
-  padding-inline: 10px;
-}
-.permission-control {
-  display: block;
-}
-.permission-control {
-  position: relative;
-}
-.permission-trigger {
-  height: 34px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #5a5b56;
-  font: inherit;
-  font-size: 10.5px;
-  cursor: pointer;
-}
-.permission-trigger:hover,
-.permission-trigger[aria-expanded="true"] {
-  background: var(--soft);
-}
-.permission-trigger:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-.permission-trigger > svg:first-child {
-  width: 14px;
-  height: 14px;
-  color: #7b7c76;
-}
-.permission-trigger > svg:last-child {
-  width: 12px;
-  height: 12px;
-  color: #92938d;
-}
-.permission-menu {
-  position: absolute;
-  bottom: 40px;
-  left: -38px;
-  z-index: 35;
-  width: 260px;
-  padding: 7px;
-  border: 1px solid var(--line-strong);
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow:
-    0 24px 70px rgba(24, 24, 18, 0.17),
-    0 3px 10px rgba(24, 24, 18, 0.05);
-}
-.permission-menu button {
-  width: 100%;
-  min-height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 9px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-}
-.permission-menu button:hover {
-  background: var(--soft);
-}
-.permission-menu button.selected {
-  background: #eff2f5;
-}
-.permission-menu button > span {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.permission-menu b {
-  font-size: 10.5px;
-  font-weight: 600;
-}
-.permission-menu small {
-  color: var(--muted);
-  font-size: 8.5px;
-}
-.permission-menu .permission-scope {
-  display: block;
-  padding: 5px 9px 8px;
-}
-.permission-menu > button > svg {
-  width: 14px;
-  height: 14px;
-  color: #356fbe;
 }
 .tool-copy small,
 .thinking-live span,
@@ -5152,8 +4989,7 @@ a:focus-visible {
   }
   .workspace-picker,
   .approval-dialog,
-  .model-menu,
-  .permission-menu {
+  .composer-picker-menu {
     overscroll-behavior: contain;
   }
   .composer textarea,
@@ -5164,8 +5000,7 @@ a:focus-visible {
   .search input,
   .new-file-form input,
   .workspace-path-entry input,
-  .file-editor,
-  .effort-control select {
+  .file-editor {
     font-size: 16px;
   }
   .composer textarea,
@@ -5176,12 +5011,19 @@ a:focus-visible {
   .empty-chat {
     padding-bottom: var(--composer-height, 180px);
   }
+  .composer,
+  .chat-main.is-empty .composer {
+    min-height: 0;
+    padding: 10px 8px 8px;
+  }
   .composer-toolbar {
-    align-items: flex-end;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 6px;
   }
   .composer-tools {
-    display: grid;
-    grid-template-columns: 36px minmax(0, 1fr) auto;
+    display: flex;
+    flex-wrap: nowrap;
     gap: 4px;
     flex: 1;
   }
@@ -5189,68 +5031,92 @@ a:focus-visible {
   .send {
     width: 36px;
     height: 36px;
-  }
-  .model-trigger,
-  .mode-toggle,
-  .permission-trigger {
-    min-height: 36px;
-    font-size: 12px;
+    flex: none;
   }
   .composer-tools .model-control {
     position: static;
     min-width: 0;
+    max-width: 200px;
+    flex: 1;
+  }
+  .composer-tools .effort-control,
+  .composer-tools .permission-control {
+    position: static;
+  }
+  .composer-tools .composer-picker-trigger {
+    height: 36px;
+    max-width: none;
+    gap: 4px;
+    padding: 0 6px;
+    border-color: var(--line);
+    border-radius: 10px;
+    background: var(--soft);
+    font-size: 11px;
+    line-height: 1;
+  }
+  .composer-tools .composer-picker-trigger:hover:not(:disabled),
+  .composer-tools .composer-picker-trigger[aria-expanded="true"] {
+    border-color: var(--line-strong);
+    background: var(--soft-hover);
+    color: var(--ink);
   }
   .composer-tools .model-trigger {
     width: 100%;
-    max-width: none;
-    padding: 0 4px;
   }
-  .model-trigger > svg,
-  .permission-trigger > svg {
+  .composer-tools .model-trigger > span {
+    flex: 1;
+    text-align: left;
+  }
+  .composer-tools .effort-trigger,
+  .composer-tools .permission-trigger {
+    width: 36px;
+    justify-content: center;
+    gap: 2px;
+    padding: 0;
+  }
+  .composer-picker-trigger .trigger-chevron {
+    width: 8px;
+    height: 8px;
+  }
+  .composer-tools .effort-trigger > span,
+  .composer-tools .permission-trigger > span,
+  .composer-tools .mode-toggle > span {
+    display: none;
+  }
+  .composer-tools .attach-button,
+  .composer-tools .mode-toggle {
+    width: 32px;
+    min-width: 32px;
+    height: 36px;
+    justify-content: center;
+    flex: none;
+    padding: 0;
+    border-radius: 10px;
+  }
+  .composer-tools .attach-button svg,
+  .composer-tools .mode-toggle svg {
+    width: 16px;
+    height: 16px;
+  }
+  .composer-actions {
+    gap: 4px;
+  }
+  .context-indicator {
+    width: 22px;
     flex: none;
   }
-  .effort-control {
-    min-width: 0;
-  }
-  .effort-control > svg:first-child {
-    display: none;
-  }
-  .effort-control select {
-    width: 110px;
-    max-width: 100%;
-    min-height: 36px;
-    padding-left: 7px;
-  }
-  .composer-tools .mode-toggle {
-    grid-column: 1 / 3;
-    justify-self: start;
-  }
-  .composer-tools .permission-control {
-    position: static;
-    justify-self: end;
-  }
-  .composer-tools .permission-trigger {
-    min-width: 44px;
-    padding: 0 6px;
-  }
-  .composer-tools .permission-trigger > span {
-    display: none;
-  }
-  .model-menu,
-  .permission-menu {
+  .composer-picker-menu {
     position: absolute;
     right: 0;
     bottom: calc(100% + 8px);
     left: 0;
     width: auto;
+    max-width: none;
     max-height: min(
       470px,
       max(100px, calc(var(--viewport-height, 100dvh) - var(--composer-height, 180px) - 60px))
     );
     overflow-y: auto;
-  }
-  .permission-menu small {
-    overflow-wrap: anywhere;
   }
   .search-threads,
   .search {
@@ -5278,18 +5144,22 @@ a:focus-visible {
   }
 }
 
-@media (min-width: 600px) and (max-width: 700px),
-  (min-width: 600px) and (max-width: 1000px) and (pointer: coarse) {
-  .composer-tools {
-    display: flex;
-    flex-wrap: nowrap;
+@media (min-width: 440px) and (max-width: 700px),
+  (min-width: 440px) and (max-width: 1000px) and (pointer: coarse) {
+  .composer-tools .effort-trigger {
+    width: auto;
+    padding-inline: 6px;
   }
-  .composer-tools .model-control {
-    flex: 1;
-    max-width: 230px;
+  .composer-tools .effort-trigger > span {
+    display: block;
   }
-  .composer-tools .mode-toggle,
-  .composer-tools .permission-control {
-    flex: none;
+}
+
+@media (max-width: 359px) {
+  .composer-tools .model-trigger {
+    justify-content: center;
+  }
+  .composer-tools .model-trigger > span {
+    display: none;
   }
 }

@@ -4,11 +4,14 @@ import {
   ClipboardList,
   Code2,
   CircleHelp,
-  Check,
   ChevronDown,
+  Eye,
   FileText,
   FolderOpen,
+  LoaderCircle,
   Paperclip,
+  Settings2,
+  ShieldAlert,
   ShieldCheck,
   Square,
   X,
@@ -17,6 +20,7 @@ import type { CollaborationMode, ModelOption } from "../types";
 import type { CompactionStatus, ThreadUsage } from "./SettingsDrawer";
 import { ModelPicker } from "./ModelPicker";
 import { EffortPicker } from "./EffortPicker";
+import { ComposerPicker } from "./ComposerPicker";
 import { MOBILE_LAYOUT_QUERY } from "../hooks/useMobileViewport";
 
 export type ComposerAttachment = {
@@ -100,68 +104,38 @@ function PermissionPicker({
   disabled: boolean;
   onPermission: (permission: PermissionPreset) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const close = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, []);
   const values = Object.keys(permissionLabels) as PermissionPreset[];
   const activeLabel = permissionLabels[permission];
+  const icons = { ask: ShieldCheck, full: ShieldAlert, "read-only": Eye, config: Settings2 };
   return (
-    <div className="permission-control" ref={root}>
-      <button
-        className="permission-trigger"
-        type="button"
-        disabled={disabled}
-        aria-label={`Permission for all sessions: ${activeLabel}`}
-        title={`${activeLabel} · All sessions · Applies from the next turn`}
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <ShieldCheck />
-        <span>{activeLabel}</span>
-        <ChevronDown />
-      </button>
-      {open && (
-        <div className="permission-menu">
-          <small className="permission-scope">All sessions · saved in Codex Web</small>
-          {values.map((value) => (
-            <button
-              type="button"
-              className={value === permission ? "selected" : ""}
-              key={value}
-              onClick={() => {
-                onPermission(value);
-                setOpen(false);
-              }}
-            >
-              <span>
-                <b>{value === "config" ? "Use config.toml" : permissionLabels[value]}</b>
-                <small>
-                  {value === "config"
-                    ? "Follow each workspace's Codex configuration"
-                    : value === "full"
-                      ? "No sandbox or approval prompts"
-                      : value === "ask"
-                        ? "Workspace access with approvals"
-                        : "Inspect files without changes"}
-                </small>
-              </span>
-              {value === permission && <Check />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <ComposerPicker
+      kind="permission"
+      label="Permission for all sessions"
+      icon={icons[permission]}
+      value={permission}
+      disabled={disabled}
+      title={`${activeLabel} · All sessions · Applies from the next turn`}
+      note="All sessions · Next turns and queued tasks"
+      options={values.map((value) => ({
+        value,
+        label: permissionLabels[value],
+        description:
+          value === "config"
+            ? "Follow each workspace's Codex configuration"
+            : value === "full"
+              ? "No sandbox or approval prompts"
+              : value === "ask"
+                ? "Workspace access with approvals"
+                : "Inspect files without changes",
+      }))}
+      onChange={(value) => onPermission(value as PermissionPreset)}
+    />
   );
 }
 
 export function Composer({
   running,
+  sending = false,
   queued = false,
   restoreDraft,
   draftKey,
@@ -189,6 +163,7 @@ export function Composer({
   onReviewApproval,
 }: {
   running: boolean;
+  sending?: boolean;
   queued?: boolean;
   restoreDraft?: {
     id: string;
@@ -220,6 +195,7 @@ export function Composer({
   onAnswerQuestion: () => void;
   onReviewApproval: () => void;
 }) {
+  const unavailable = disabled || sending;
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const drafts = useRef(new Map<string, ComposerDraft>());
@@ -354,6 +330,7 @@ export function Composer({
     if (
       (!text.trim() && !attachments.length) ||
       running ||
+      sending ||
       disabled ||
       submitting.current ||
       adding.current ||
@@ -496,7 +473,7 @@ export function Composer({
           <button
             type="button"
             className={`workspace-trigger${workspace ? "" : " unselected"}`}
-            disabled={addingFiles}
+            disabled={addingFiles || sending}
             aria-label={workspace ? `Change working folder: ${workspace}` : "Choose working folder"}
             title={workspace || "Choose working folder"}
             onClick={onChooseWorkspace}
@@ -512,7 +489,7 @@ export function Composer({
             <button
               type="button"
               className="composer-draft-switch"
-              disabled={running || addingFiles}
+              disabled={unavailable || running || addingFiles}
               onClick={switchDraft}
             >
               Switch to saved draft ({alternateCount})
@@ -571,7 +548,7 @@ export function Composer({
           <textarea
             ref={area}
             value={text}
-            disabled={disabled || running || addingFiles}
+            disabled={unavailable || running || addingFiles}
             rows={1}
             placeholder={
               disabled
@@ -614,13 +591,13 @@ export function Composer({
                 className="attachment-input"
                 type="file"
                 multiple
-                disabled={disabled || running || addingFiles}
+                disabled={unavailable || running || addingFiles}
                 onChange={(event) => addFiles(event.target.files)}
               />
               <button
                 className="attach-button"
                 type="button"
-                disabled={disabled || running || addingFiles}
+                disabled={unavailable || running || addingFiles}
                 aria-label="Add attachment"
                 title="Attach files to this conversation"
                 onClick={() => input.current?.click()}
@@ -633,18 +610,18 @@ export function Composer({
                 effort={effort}
                 onModel={onModel}
                 onEffort={onEffort}
-                disabled={disabled || running}
+                disabled={unavailable || running}
               />
               <EffortPicker
                 model={selectedModel}
                 effort={effort}
-                disabled={disabled || running}
+                disabled={unavailable || running}
                 onEffort={onEffort}
               />
               <button
                 type="button"
                 className={`mode-toggle ${mode}`}
-                disabled={disabled || running}
+                disabled={unavailable || running}
                 aria-label={
                   mode === "plan" ? "Plan mode: switch to Code" : "Code mode: switch to Plan"
                 }
@@ -661,7 +638,7 @@ export function Composer({
               </button>
               <PermissionPicker
                 permission={permission}
-                disabled={disabled}
+                disabled={unavailable}
                 onPermission={onPermission}
               />
             </div>
@@ -706,13 +683,14 @@ export function Composer({
               )}
               <button
                 className={`send ${running ? "stop" : ""}`}
-                aria-label={running ? "Stop" : "Send"}
+                aria-label={running ? "Stop" : sending ? "Sending" : "Send"}
                 disabled={
-                  !running && (disabled || addingFiles || (!text.trim() && !attachments.length))
+                  !running &&
+                  (sending || disabled || addingFiles || (!text.trim() && !attachments.length))
                 }
                 onClick={running ? stop : submit}
               >
-                {running ? <Square /> : <ArrowUp />}
+                {running ? <Square /> : sending ? <LoaderCircle /> : <ArrowUp />}
               </button>
             </div>
           </div>

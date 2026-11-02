@@ -1,5 +1,6 @@
-import { BrainCircuit, ChevronDown } from "lucide-react";
+import { BrainCircuit } from "lucide-react";
 import type { ModelOption } from "../types";
+import { ComposerPicker } from "./ComposerPicker";
 
 export function EffortPicker({
   model,
@@ -14,26 +15,25 @@ export function EffortPicker({
 }) {
   const efforts = model?.supportedReasoningEfforts || [];
   if (!efforts.length) return null;
-  const selected = efforts.find((item) => item.reasoningEffort === effort);
   return (
-    <label className="effort-control" title={selected?.description || "Reasoning effort"}>
-      <BrainCircuit aria-hidden="true" />
-      <select
-        aria-label="Reasoning effort"
-        value={effort}
-        disabled={disabled}
-        onChange={(event) => onEffort(event.target.value)}
-      >
-        <option value="">Default</option>
-        {efforts.map((item) => (
-          <option key={item.reasoningEffort} value={item.reasoningEffort}>
-            {item.reasoningEffort === "xhigh"
+    <ComposerPicker
+      kind="effort"
+      label="Reasoning effort"
+      icon={BrainCircuit}
+      value={effort}
+      options={[
+        { value: "", label: "Default", description: "Use the model's default reasoning effort" },
+        ...efforts.map((item) => ({
+          value: item.reasoningEffort,
+          label:
+            item.reasoningEffort === "xhigh"
               ? "Extra high"
-              : item.reasoningEffort.charAt(0).toUpperCase() + item.reasoningEffort.slice(1)}
-          </option>
-        ))}
-      </select>
-      <ChevronDown aria-hidden="true" />
-    </label>
+              : item.reasoningEffort.charAt(0).toUpperCase() + item.reasoningEffort.slice(1),
+          description: item.description,
+        })),
+      ]}
+      disabled={disabled}
+      onChange={onEffort}
+    />
   );
 }
