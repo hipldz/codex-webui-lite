@@ -3817,8 +3817,11 @@ svg {
   color: #356aa9;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
   .app-shell {
+    position: relative;
+    top: var(--viewport-top, 0px);
+    height: var(--viewport-height, 100dvh);
     min-height: 0;
     display: block;
   }
@@ -3830,8 +3833,12 @@ svg {
     height: 100%;
   }
   .workspace-header {
-    height: 48px;
-    padding: 0 8px;
+    height: calc(48px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0
+      max(8px, env(safe-area-inset-left));
+  }
+  .desktop-sidebar-open {
+    display: none;
   }
   .mobile-menu {
     display: grid;
@@ -3866,12 +3873,9 @@ svg {
   .header-button span {
     display: none;
   }
-  .chat-main {
-    height: calc(100dvh - 48px);
-  }
   .conversation-inner {
     width: 100%;
-    padding: 21px 12px 148px;
+    padding: 21px max(12px, env(safe-area-inset-right)) 148px max(12px, env(safe-area-inset-left));
   }
   .message {
     margin-bottom: 21px;
@@ -3929,10 +3933,12 @@ svg {
     height: 28px;
   }
   .composer-wrap {
-    padding: 30px 7px max(7px, env(safe-area-inset-bottom));
+    padding: 24px max(7px, env(safe-area-inset-right)) max(7px, env(safe-area-inset-bottom))
+      max(7px, env(safe-area-inset-left));
     background: linear-gradient(transparent, var(--bg) 28%);
   }
   .composer {
+    position: relative;
     min-height: 99px;
     padding: 10px 9px 7px;
     border-radius: 16px;
@@ -3972,14 +3978,6 @@ svg {
   .image-lightbox {
     padding: 48px 12px 20px;
   }
-  .model-menu {
-    position: fixed;
-    right: 8px;
-    bottom: 111px;
-    left: 8px;
-    width: auto;
-    max-height: 58dvh;
-  }
   .chat-main.is-empty .conversation-inner {
     padding: 0 12px;
   }
@@ -4000,8 +3998,8 @@ svg {
     font-size: 9px;
   }
   .chat-main.is-empty .composer-wrap {
-    bottom: 50%;
-    transform: translateY(150px);
+    bottom: 0;
+    transform: none;
   }
   .chat-main.is-empty .composer {
     min-height: 112px;
@@ -4011,14 +4009,19 @@ svg {
   }
   .sidebar-layer .sidebar {
     width: min(310px, 88vw);
+    padding-top: max(13px, env(safe-area-inset-top));
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    padding-left: max(10px, env(safe-area-inset-left));
     border-right: 0;
     box-shadow: 20px 0 60px rgba(20, 20, 16, 0.18);
   }
   .file-drawer,
   .settings,
   .diff-drawer {
-    width: 100vw;
-    height: 100dvh;
+    width: 100%;
+    height: 100%;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+      env(safe-area-inset-left);
     box-shadow: none;
   }
   .diff-drawer-body {
@@ -4311,7 +4314,7 @@ svg {
   .search {
     background: #222320;
   }
-  @media (max-width: 700px) {
+  @media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
     .composer-wrap {
       background: linear-gradient(transparent, var(--bg) 28%);
     }
@@ -4517,7 +4520,7 @@ svg {
   font-size: 9px;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
   .user-bubble p,
   .assistant-body p,
   .assistant-body ul,
@@ -5079,7 +5082,7 @@ a:focus-visible {
 .plan-card .lucide-loader-circle {
   animation: spin 1s linear infinite;
 }
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
   .question-card,
   .plan-card {
     margin-right: 0;
@@ -5114,38 +5117,179 @@ a:focus-visible {
 .chat-main:not(.is-empty) .conversation-inner {
   padding-bottom: calc(var(--composer-height, 148px) + 24px);
 }
-@media (max-width: 700px) {
-  .composer-tools {
-    gap: 2px;
-    flex: 1;
+@media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
+  .drawer-layer,
+  .modal-layer,
+  .image-lightbox,
+  .boot-loading {
+    top: var(--viewport-top, 0px);
+    bottom: auto;
+    height: var(--viewport-height, 100dvh);
+  }
+  .modal-layer {
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+      max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+  .workspace-picker {
+    min-width: 0;
+    min-height: 0;
+    height: min(630px, 100%);
+    overflow-y: auto;
+  }
+  .workspace-picker > footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    flex: none;
+    background: var(--surface);
+  }
+  .workspace-folders {
+    min-height: 100px;
+  }
+  .approval-dialog {
+    min-width: 0;
+    max-height: 100%;
+  }
+  .workspace-picker,
+  .approval-dialog,
+  .model-menu,
+  .permission-menu {
+    overscroll-behavior: contain;
+  }
+  .composer textarea,
+  .chat-main.is-empty .composer textarea,
+  .question-custom textarea,
+  .question-custom input[type="password"],
+  .search-threads input,
+  .search input,
+  .new-file-form input,
+  .workspace-path-entry input,
+  .file-editor,
+  .effort-control select {
+    font-size: 16px;
+  }
+  .composer textarea,
+  .chat-main.is-empty .composer textarea {
+    min-height: 43px;
+    max-height: min(160px, calc(var(--viewport-height, 100dvh) * 0.22));
+  }
+  .empty-chat {
+    padding-bottom: var(--composer-height, 180px);
   }
   .composer-toolbar {
     align-items: flex-end;
   }
+  .composer-tools {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    gap: 4px;
+    flex: 1;
+  }
+  .attach-button,
+  .send {
+    width: 36px;
+    height: 36px;
+  }
+  .model-trigger,
+  .mode-toggle,
+  .permission-trigger {
+    min-height: 36px;
+    font-size: 12px;
+  }
   .composer-tools .model-control {
+    position: static;
     min-width: 0;
-    flex: 1 1 100px;
   }
   .composer-tools .model-trigger {
     width: 100%;
-    max-width: 140px;
+    max-width: none;
     padding: 0 4px;
   }
-  .composer-tools .model-trigger > span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .model-trigger > svg,
+  .permission-trigger > svg {
+    flex: none;
+  }
+  .effort-control {
+    min-width: 0;
   }
   .effort-control > svg:first-child {
     display: none;
   }
   .effort-control select {
+    width: 110px;
+    max-width: 100%;
+    min-height: 36px;
     padding-left: 7px;
   }
+  .composer-tools .mode-toggle {
+    grid-column: 1 / 3;
+    justify-self: start;
+  }
+  .composer-tools .permission-control {
+    position: static;
+    justify-self: end;
+  }
   .composer-tools .permission-trigger {
-    padding: 0 5px;
+    min-width: 44px;
+    padding: 0 6px;
   }
   .composer-tools .permission-trigger > span {
     display: none;
+  }
+  .model-menu,
+  .permission-menu {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 8px);
+    left: 0;
+    width: auto;
+    max-height: min(
+      470px,
+      max(100px, calc(var(--viewport-height, 100dvh) - var(--composer-height, 180px) - 60px))
+    );
+    overflow-y: auto;
+  }
+  .permission-menu small {
+    overflow-wrap: anywhere;
+  }
+  .search-threads,
+  .search {
+    min-height: 40px;
+  }
+  .thread-more {
+    display: grid;
+  }
+  .question-card footer,
+  .question-card footer > div,
+  .plan-card footer,
+  .file-location-bar,
+  .file-drawer .preview-head,
+  .preview-actions {
+    flex-wrap: wrap;
+  }
+  .file-drawer .preview-head {
+    height: auto;
+    min-height: 48px;
+    padding-block: 6px;
+  }
+  .file-drawer .preview-head > span {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+}
+
+@media (min-width: 600px) and (max-width: 700px),
+  (min-width: 600px) and (max-width: 1000px) and (pointer: coarse) {
+  .composer-tools {
+    display: flex;
+    flex-wrap: nowrap;
+  }
+  .composer-tools .model-control {
+    flex: 1;
+    max-width: 230px;
+  }
+  .composer-tools .mode-toggle,
+  .composer-tools .permission-control {
+    flex: none;
   }
 }

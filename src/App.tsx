@@ -23,6 +23,7 @@ import {
 import { WorkspacePicker } from "./components/WorkspacePicker";
 import { demoItems, demoThreads, demoQuestionItems, demoPlanItems } from "./demo";
 import { useApiTransport } from "./hooks/useApiTransport";
+import { useMobileViewport } from "./hooks/useMobileViewport";
 import { useTaskNotifications } from "./hooks/useTaskNotifications";
 import { mergeThreadList, mergeThreadSummary } from "./thread-list";
 import { threadIsRunning } from "./thread-status";
@@ -192,6 +193,7 @@ const editDiff = (path: string, before: string, after: string) => {
 };
 
 export function App() {
+  useMobileViewport();
   const [threads, setThreads] = useState<Thread[]>(demo ? demoThreads : []);
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
@@ -1064,6 +1066,7 @@ export function App() {
     if (submitting.current || sessionLoadingRef.current || workspaceSelectingRef.current) return;
     if (!mayChangeContext()) return;
     if (!demo && !beginSessionLoading("new", "Preparing new session")) return;
+    setSidebar(false);
     setFiles(false);
     setFileTarget("");
     setFileScope("workspace");
@@ -1106,15 +1109,14 @@ export function App() {
     }
   };
   const select = (id: string) => {
-    if (
-      submitting.current ||
-      sessionLoadingRef.current ||
-      workspaceSelectingRef.current ||
-      id === activeRef.current?.id
-    )
+    if (submitting.current || sessionLoadingRef.current || workspaceSelectingRef.current) return;
+    if (id === activeRef.current?.id) {
+      setSidebar(false);
       return;
+    }
     if (!mayChangeContext()) return;
     if (demo) {
+      setSidebar(false);
       setFiles(false);
       setFileTarget("");
       setFileScope("workspace");
@@ -1133,6 +1135,7 @@ export function App() {
       return;
     }
     if (!beginSessionLoading(id, "Opening session")) return;
+    setSidebar(false);
     setMessageHistory({ cursor: null, hasEarlier: false, loading: false });
     send({ type: "thread.resume", threadId: id });
   };

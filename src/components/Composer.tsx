@@ -17,6 +17,7 @@ import type { CollaborationMode, ModelOption } from "../types";
 import type { CompactionStatus, ThreadUsage } from "./SettingsDrawer";
 import { ModelPicker } from "./ModelPicker";
 import { EffortPicker } from "./EffortPicker";
+import { MOBILE_LAYOUT_QUERY } from "../hooks/useMobileViewport";
 
 export type ComposerAttachment = {
   id: string;
@@ -599,7 +600,7 @@ export function Composer({
               if (
                 event.key === "Enter" &&
                 !event.shiftKey &&
-                matchMedia("(min-width: 701px)").matches
+                !matchMedia(MOBILE_LAYOUT_QUERY).matches
               ) {
                 event.preventDefault();
                 submit();
