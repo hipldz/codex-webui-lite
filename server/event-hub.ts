@@ -6,6 +6,7 @@ export class EventHub {
   private cursor = 0;
   private bytes = 0;
   private events: Array<BufferedEvent & { bytes: number }> = [];
+  private listeners = new Set<() => void>();
   constructor(
     private readonly limit = 1000,
     private readonly byteLimit = 8 * 1024 * 1024,
@@ -24,6 +25,12 @@ export class EventHub {
     this.bytes += bytes;
     while (this.events.length && (this.events.length > this.limit || this.bytes > this.byteLimit))
       this.bytes -= this.events.shift()!.bytes;
+    for (const listener of this.listeners) listener();
+  }
+
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   read(after: number, instance?: string) {

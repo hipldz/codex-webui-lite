@@ -339,6 +339,7 @@ svg {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-anchor: none;
   scrollbar-width: thin;
 }
 .thread {
@@ -585,41 +586,15 @@ svg {
   text-overflow: ellipsis;
 }
 .thread-heading span {
-  display: flex;
-  align-items: center;
-  gap: 5px;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 8px;
 }
-.thread-heading i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #b9bab5;
-}
-.thread-heading i.online {
-  background: var(--green);
-}
 .header-actions {
   gap: 5px;
-}
-.connection {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 7px;
-  color: var(--muted);
-  font-size: 9px;
-}
-.connection i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #bbb;
-}
-.connection.online i {
-  background: var(--green);
-  box-shadow: 0 0 0 3px rgba(47, 157, 98, 0.11);
 }
 .header-button,
 .header-icon-button,
@@ -3112,33 +3087,21 @@ svg {
   color: var(--muted);
   font-size: 8px;
 }
-.boot-error {
-  position: fixed;
-  z-index: 190;
-  top: 72px;
-  left: 50%;
-  width: min(520px, calc(100vw - 28px));
+.service-error {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  border: 1px solid #e4b5b0;
-  border-radius: 9px;
+  border-bottom: 1px solid #e4b5b0;
   background: #fff2f1;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-  transform: translateX(-50%);
-}
-.boot-error b,
-.boot-error small {
-  display: block;
-}
-.boot-error small {
-  margin-top: 2px;
   color: #8e4540;
+  font-size: 11px;
 }
-.boot-error button {
-  height: 28px;
+.service-error button {
+  flex: none;
+  min-height: 28px;
   padding: 0 10px;
   border: 0;
   border-radius: 6px;
@@ -3146,38 +3109,9 @@ svg {
   color: #fff;
   cursor: pointer;
 }
-.runtime-chip {
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 7px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 8.5px;
-  text-transform: capitalize;
-}
-.runtime-chip:hover {
-  background: var(--soft);
-  color: var(--ink);
-}
-.runtime-chip i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #a2a39e;
-}
-.runtime-chip.ready i {
-  background: var(--green);
-}
-.runtime-chip.starting i {
-  background: #d59b36;
-}
-.runtime-chip.error i {
-  background: var(--red);
+.service-error > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .preview-empty {
   margin: auto;
@@ -3924,18 +3858,6 @@ svg {
     max-width: 100%;
     font-size: 12px;
   }
-  .runtime-chip {
-    max-width: 80px;
-    overflow: hidden;
-    white-space: nowrap;
-  }
-  .thread-heading span {
-    display: none;
-  }
-  .connection,
-  .header-icon-button {
-    display: none;
-  }
   .header-button {
     width: 38px;
     padding: 0;
@@ -4420,8 +4342,7 @@ svg {
 .thread-heading strong {
   font-size: 13px;
 }
-.thread-heading span,
-.connection {
+.thread-heading span {
   font-size: 9px;
 }
 .user-bubble p {
@@ -4539,6 +4460,10 @@ svg {
 .permission-menu small {
   color: var(--muted);
   font-size: 8.5px;
+}
+.permission-menu .permission-scope {
+  display: block;
+  padding: 5px 9px 8px;
 }
 .permission-menu > button > svg {
   width: 14px;

@@ -11,7 +11,9 @@ import { WorkspaceFs } from "./filesystem.js";
 import { CodexClient } from "./codex/client.js";
 import { AttachmentStore } from "./attachments.js";
 import { EventHub } from "./event-hub.js";
+import { streamEvents } from "./event-stream.js";
 import { CodexController } from "./controller.js";
+import { WebUiSettings } from "./settings.js";
 import { acceptedEncodings, actionRequestError, fileHeaders } from "./http-policy.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -28,6 +30,8 @@ try {
 }
 const attachmentStore = new AttachmentStore();
 await attachmentStore.init();
+const settings = new WebUiSettings();
+await settings.init();
 const codex = new CodexClient(workspaceFs.path);
 const events = new EventHub();
 const meta = () => ({
@@ -39,7 +43,7 @@ const meta = () => ({
   basePath: config.basePath,
   codexVersion: codex.userAgent,
 });
-const controller = new CodexController(codex, workspaceFs, attachmentStore, events, meta);
+const controller = new CodexController(codex, workspaceFs, attachmentStore, events, meta, settings);
 const vite = config.dev
   ? await (
       await import("vite")
@@ -120,6 +124,7 @@ const readJson = async (req: http.IncomingMessage) => {
 
 let largeActions = 0;
 let actionCount = 0;
+const eventStreams = new Set<http.ServerResponse>();
 const server = http.createServer(async (req, res) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "same-origin");
@@ -153,6 +158,11 @@ const server = http.createServer(async (req, res) => {
         meta: { ...meta(), codexStatus: codex.status },
       });
     }
+  }
+  if (localPath === "/api/events/stream" && req.method === "GET") {
+    eventStreams.add(res);
+    res.once("close", () => eventStreams.delete(res));
+    return streamEvents(req, res, events, url);
   }
   if (localPath === "/api/events" && req.method === "GET")
     return sendJson(
@@ -335,6 +345,7 @@ let shuttingDown = false;
 const shutdown = async () => {
   if (shuttingDown) return;
   shuttingDown = true;
+  for (const stream of eventStreams) stream.end();
   server.close();
   await controller.handle({ type: "runtime.stop" });
   await vite?.close();

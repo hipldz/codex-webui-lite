@@ -92,12 +92,10 @@ const permissionLabels: Record<PermissionPreset, string> = {
 
 function PermissionPicker({
   permission,
-  configPermissionLabel,
   disabled,
   onPermission,
 }: {
   permission: PermissionPreset;
-  configPermissionLabel: string;
   disabled: boolean;
   onPermission: (permission: PermissionPreset) => void;
 }) {
@@ -111,16 +109,15 @@ function PermissionPicker({
     return () => document.removeEventListener("mousedown", close);
   }, []);
   const values = Object.keys(permissionLabels) as PermissionPreset[];
-  const activeLabel =
-    permission === "config" ? configPermissionLabel : permissionLabels[permission];
+  const activeLabel = permissionLabels[permission];
   return (
     <div className="permission-control" ref={root}>
       <button
         className="permission-trigger"
         type="button"
         disabled={disabled}
-        aria-label={`Session permission: ${activeLabel}`}
-        title={activeLabel}
+        aria-label={`Permission for all sessions: ${activeLabel}`}
+        title={`${activeLabel} · All sessions · Applies from the next turn`}
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
@@ -130,6 +127,7 @@ function PermissionPicker({
       </button>
       {open && (
         <div className="permission-menu">
+          <small className="permission-scope">All sessions · saved in Codex Web</small>
           {values.map((value) => (
             <button
               type="button"
@@ -144,7 +142,7 @@ function PermissionPicker({
                 <b>{value === "config" ? "Use config.toml" : permissionLabels[value]}</b>
                 <small>
                   {value === "config"
-                    ? configPermissionLabel
+                    ? "Follow each workspace's Codex configuration"
                     : value === "full"
                       ? "No sandbox or approval prompts"
                       : value === "ask"
@@ -173,7 +171,7 @@ export function Composer({
   model,
   effort,
   permission,
-  configPermissionLabel,
+  permissionError,
   workspace,
   onChooseWorkspace,
   threadUsage,
@@ -205,7 +203,7 @@ export function Composer({
   model: string;
   effort: string;
   permission: PermissionPreset;
-  configPermissionLabel: string;
+  permissionError?: string;
   workspace: string;
   onChooseWorkspace: () => void;
   threadUsage: ThreadUsage | null;
@@ -564,6 +562,11 @@ export function Composer({
             </p>
           )}
           {attachmentError && <div className="attachment-error">{attachmentError}</div>}
+          {permissionError && (
+            <div className="attachment-error" role="alert">
+              {permissionError}
+            </div>
+          )}
           <textarea
             ref={area}
             value={text}
@@ -657,8 +660,7 @@ export function Composer({
               </button>
               <PermissionPicker
                 permission={permission}
-                configPermissionLabel={configPermissionLabel}
-                disabled={running}
+                disabled={disabled}
                 onPermission={onPermission}
               />
             </div>

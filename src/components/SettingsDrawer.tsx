@@ -350,7 +350,7 @@ export function SettingsDrawer({
               </div>
               <div>
                 <dt>Connection</dt>
-                <dd>{connected ? "HTTP polling connected" : "Disconnected"}</dd>
+                <dd>{connected ? "SSE connected" : "Disconnected"}</dd>
               </div>
               <div>
                 <dt>Base path</dt>

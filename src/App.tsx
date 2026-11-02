@@ -24,6 +24,7 @@ import { WorkspacePicker } from "./components/WorkspacePicker";
 import { demoItems, demoThreads, demoQuestionItems, demoPlanItems } from "./demo";
 import { useApiTransport } from "./hooks/useApiTransport";
 import { useTaskNotifications } from "./hooks/useTaskNotifications";
+import { mergeThreadList, mergeThreadSummary } from "./thread-list";
 import { threadIsRunning } from "./thread-status";
 import type {
   CollaborationMode,
@@ -148,11 +149,6 @@ const displayAttachment = (item: ComposerAttachment) => ({
   size: item.size,
   data: item.kind === "image" ? item.data : undefined,
 });
-const mergeThreadSummary = (previous: Thread | null | undefined, incoming: Thread): Thread => ({
-  ...previous,
-  ...incoming,
-  preview: incoming.preview || previous?.preview || "",
-});
 const lastTurnIndex = (value: UiItem[], turnId: string) => {
   for (let index = value.length - 1; index >= 0; index--)
     if (value[index].turnId === turnId) return index;
@@ -212,6 +208,8 @@ export function App() {
     recent: string | null;
     archived: string | null;
   }>({ recent: null, archived: null });
+  const threadListPaginated = useRef({ recent: false, archived: false });
+  const threadListLoading = useRef(new Set<"recent" | "archived">());
   const [active, setActive] = useState<Thread | null>(demo ? demoThreads[0] : null);
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -257,9 +255,10 @@ export function App() {
   );
   const [mode, setMode] = useState<CollaborationMode>(demoScenario === "plan" ? "plan" : "default");
   const [permission, setPermission] = useState<PermissionPreset>("ask");
-  const [configPermissionLabel, setConfigPermissionLabel] = useState(
-    "Ask when needed (Codex default)",
-  );
+  const permissionRevision = useRef(-1);
+  const permissionSavingRef = useRef(false);
+  const [permissionSaving, setPermissionSaving] = useState(false);
+  const [permissionError, setPermissionError] = useState("");
   const [running, setRunning] = useState(false);
   const [turnId, setTurnId] = useState<string>();
   const [queued, setQueued] = useState(false);
@@ -381,12 +380,16 @@ export function App() {
   const sessionToResume = useRef(initialSession);
   const sessionLoadingRef = useRef("");
   const sessionLoadingStarted = useRef(0);
-  const [sessionLoading, setSessionLoading] = useState<{ id: string; label: string } | null>(null);
-  const beginSessionLoading = useCallback((id: string, label: string) => {
+  const [sessionLoading, setSessionLoading] = useState<{
+    id: string;
+    label: string;
+    silent: boolean;
+  } | null>(null);
+  const beginSessionLoading = useCallback((id: string, label: string, silent = false) => {
     if (sessionLoadingRef.current) return false;
     sessionLoadingRef.current = id;
     sessionLoadingStarted.current = performance.now();
-    setSessionLoading({ id, label });
+    setSessionLoading({ id, label, silent });
     return true;
   }, []);
   const finishSessionLoading = useCallback((id?: string) => {
@@ -440,6 +443,17 @@ export function App() {
 
   const onMessage = useCallback(
     (message: any) => {
+      if (message.settings) {
+        const { permission: nextPermission, revision } = message.settings;
+        if (
+          ["ask", "full", "read-only", "config"].includes(nextPermission) &&
+          Number.isSafeInteger(revision) &&
+          revision >= permissionRevision.current
+        ) {
+          permissionRevision.current = revision;
+          setPermission(nextPermission);
+        }
+      }
       if (message.requestId && pending.current.has(message.requestId)) {
         pending.current.get(message.requestId)?.(message);
         pending.current.delete(message.requestId);
@@ -452,8 +466,10 @@ export function App() {
       )
         updateInteractions(message.threadId, message.items);
       if (message.type === "events.reset") {
-        if (activeRef.current) {
-          beginSessionLoading(activeRef.current.id, "Reconnecting session");
+        if (
+          activeRef.current &&
+          beginSessionLoading(activeRef.current.id, "Reconnecting session", true)
+        ) {
           void sendRef.current({ type: "thread.resume", threadId: activeRef.current.id });
         }
         return;
@@ -481,7 +497,24 @@ export function App() {
           runtime: message.runtime,
         }));
         if (["stopped", "error"].includes(message.codexStatus)) {
+          setBoot((old) =>
+            message.codexStatus === "stopped" && old.active && old.stage === "Starting Codex"
+              ? old
+              : {
+                  active: false,
+                  stage: "Codex unavailable",
+                  error:
+                    message.runtime?.lastError ||
+                    (message.codexStatus === "stopped"
+                      ? "Codex is stopped. Start it to continue."
+                      : "Codex exited unexpectedly. Restart it to continue."),
+                },
+          );
           commitInteractions([]);
+          const stopped = (old: Thread[]) =>
+            old.map((thread) => ({ ...thread, queued: false, status: { type: "idle" } }));
+          setThreads(stopped);
+          setArchivedThreads(stopped);
           setRunning(false);
           setQueued(false);
           setTurnId(undefined);
@@ -504,10 +537,12 @@ export function App() {
             ),
           );
         }
+        if (message.codexStatus === "ready") setBoot({ active: false, stage: "Ready", error: "" });
         if (
           message.codexStatus === "ready" &&
           ["stopped", "error"].includes(previous) &&
-          activeRef.current
+          activeRef.current &&
+          beginSessionLoading(activeRef.current.id, "Reconnecting session", true)
         )
           void sendRef.current({ type: "thread.resume", threadId: activeRef.current.id });
       } else if (message.type === "bootstrap.stage")
@@ -525,20 +560,12 @@ export function App() {
           error: message.message || "Unknown startup error",
         });
       else if (message.type === "threads") {
-        const merge = (old: Thread[]) => {
-          const previous = new Map(old.map((thread) => [thread.id, thread]));
-          const incoming = message.threads.map((thread: Thread) =>
-            mergeThreadSummary(previous.get(thread.id), thread),
+        const merge = (old: Thread[]) =>
+          mergeThreadList(
+            old,
+            message.threads,
+            message.refresh ? "refresh" : message.append ? "append" : "replace",
           );
-          if (message.refresh)
-            return [
-              ...incoming,
-              ...old.filter((entry) => !incoming.some((next: Thread) => next.id === entry.id)),
-            ];
-          if (message.append)
-            return [...old, ...incoming.filter((next: Thread) => !previous.has(next.id))];
-          return incoming;
-        };
         const current = message.threads.find(
           (thread: Thread) => thread.id === activeRef.current?.id,
         );
@@ -550,14 +577,13 @@ export function App() {
           setQueued(Boolean(current.queued));
           if (!isRunning) setTurnId(undefined);
         }
-        if (message.archived) {
-          setArchivedThreads(merge);
-          setThreadCursors((old) => ({ ...old, archived: message.nextCursor || null }));
-        } else {
-          setThreads(merge);
-          if (!message.refresh)
-            setThreadCursors((old) => ({ ...old, recent: message.nextCursor || null }));
-        }
+        const view = message.archived ? "archived" : "recent";
+        if (message.archived) setArchivedThreads(merge);
+        else setThreads(merge);
+        // A head refresh must not rewind the cursor past pages already loaded.
+        if (!message.refresh || !threadListPaginated.current[view])
+          setThreadCursors((old) => ({ ...old, [view]: message.nextCursor || null }));
+        if (!message.refresh) threadListPaginated.current[view] = Boolean(message.append);
       } else if (message.type === "models") {
         setModels(message.models);
         const configured = message.models.find(
@@ -576,10 +602,6 @@ export function App() {
         if (!activeRef.current) {
           setModel(nextModel);
           setEffort(nextEffort);
-        }
-        if (message.defaultPermission && !message.action) {
-          setPermission(message.defaultPermission);
-          setConfigPermissionLabel(message.defaultPermissionLabel || "Codex default");
         }
       } else if (message.type === "thread.active") {
         if (message.pendingInteractions) {
@@ -644,10 +666,6 @@ export function App() {
           ),
         );
         setTurnId(message.turnId);
-        if (message.defaultPermission) {
-          setPermission(message.defaultPermission);
-          setConfigPermissionLabel(message.defaultPermissionLabel || "Codex default");
-        }
         const status =
           typeof message.running === "boolean"
             ? { type: message.running ? "active" : "idle" }
@@ -678,13 +696,9 @@ export function App() {
           loading: false,
         });
       } else if (message.type === "thread.changed") {
-        setThreads((old) => [
-          mergeThreadSummary(
-            old.find((entry) => entry.id === message.thread.id),
-            message.thread,
-          ),
-          ...old.filter((entry) => entry.id !== message.thread.id),
-        ]);
+        const update = (old: Thread[]) => mergeThreadList(old, [message.thread], "refresh");
+        if (message.archived) setArchivedThreads(update);
+        else setThreads(update);
         setActive((old) =>
           old?.id === message.thread.id ? mergeThreadSummary(old, message.thread) : old,
         );
@@ -693,8 +707,18 @@ export function App() {
           commitInteractions(
             pendingInteractionsRef.current.filter((entry) => entry.threadId !== message.threadId),
           );
-        setThreads((old) => old.filter((entry) => entry.id !== message.threadId));
-        setArchivedThreads((old) => old.filter((entry) => entry.id !== message.threadId));
+        const thread =
+          message.thread || threadsRef.current.find((entry) => entry.id === message.threadId);
+        setThreads((old) =>
+          message.action === "unarchive" && thread
+            ? mergeThreadList(old, [thread], "refresh")
+            : old.filter((entry) => entry.id !== message.threadId),
+        );
+        setArchivedThreads((old) =>
+          message.action === "archive" && thread
+            ? mergeThreadList(old, [thread], "refresh")
+            : old.filter((entry) => entry.id !== message.threadId),
+        );
         if (activeRef.current?.id === message.threadId && message.action !== "unarchive") {
           setFiles(false);
           setFileTarget("");
@@ -715,8 +739,12 @@ export function App() {
           setThreadUsage(null);
           setCompaction(null);
         }
-        sendRef.current({ type: "thread.list" });
-        sendRef.current({ type: "thread.list", archived: true });
+        if (!thread && message.action !== "delete")
+          void sendRef.current({
+            type: "thread.list",
+            archived: message.action === "archive",
+            refresh: true,
+          });
       } else if (message.type === "items") {
         if (message.threadId === activeRef.current?.id)
           setItems((old) => mergeItems(old, message.items));
@@ -729,9 +757,6 @@ export function App() {
             thread?.name || thread?.preview || "",
           );
         }
-        // The running-only poll stops at turn completion, so fetch its final title now.
-        if (message.threadId && message.running === false)
-          void sendRef.current({ type: "thread.list", refresh: true });
         const nextStatus =
           message.threadStatus ||
           (typeof message.running === "boolean"
@@ -814,7 +839,6 @@ export function App() {
         }
       } else if (message.type === "turn.accepted") {
         outgoing.current.delete(message.messageId);
-        if (message.running === false) void sendRef.current({ type: "thread.list", refresh: true });
         if (message.threadId)
           setThreads((old) =>
             old.map((thread) =>
@@ -885,10 +909,6 @@ export function App() {
         setDefaultEffort(nextEffort);
         setModel(nextModel);
         setEffort(nextEffort);
-        if (message.defaultPermission) {
-          setPermission(message.defaultPermission);
-          setConfigPermissionLabel(message.defaultPermissionLabel || "Codex default");
-        }
         const selected = message.workspaceSelected ?? true;
         setWorkspaceNotice("");
         setMeta((old) => ({
@@ -920,7 +940,11 @@ export function App() {
       } else if (message.type === "system.usage") setResources(message.usage);
       else if (message.type === "account.usage") setAccount(message);
       else if (message.type === "error") {
-        if (["input.respond", "approval.respond", "workspace.select"].includes(message.action))
+        if (
+          ["input.respond", "approval.respond", "workspace.select", "settings.update"].includes(
+            message.action,
+          )
+        )
           return;
         finishSessionLoading();
         if (message.action === "runtime.restart" || message.action === "runtime.start")
@@ -962,9 +986,37 @@ export function App() {
       commitInteractions,
     ],
   );
-  const { connected, send } = useApiTransport(onMessage, demo);
+  const {
+    connected,
+    connectionError,
+    retry: retryConnection,
+    send,
+  } = useApiTransport(onMessage, demo);
   const sendRef = useRef(send);
   sendRef.current = send;
+  const changePermission = async (next: PermissionPreset) => {
+    if (permissionSavingRef.current || next === permission) return;
+    setPermissionError("");
+    if (demo) {
+      setPermission(next);
+      return;
+    }
+    permissionSavingRef.current = true;
+    setPermissionSaving(true);
+    try {
+      const messages = await send({ type: "settings.update", permission: next });
+      if (!messages.some((message) => message.type === "settings.updated"))
+        setPermissionError(
+          messages.find((message) => message.type === "error")?.message ||
+            "Could not save the permission setting. Try again.",
+        );
+    } catch (error) {
+      setPermissionError(error instanceof Error ? error.message : "Could not save permissions");
+    } finally {
+      permissionSavingRef.current = false;
+      setPermissionSaving(false);
+    }
+  };
   useEffect(() => {
     const previous = previousNotificationStatus.current;
     previousNotificationStatus.current = notifications.status;
@@ -981,14 +1033,6 @@ export function App() {
     beginSessionLoading(threadId, "Opening session");
     send({ type: "thread.resume", threadId });
   }, [connected, meta.codexStatus, send, beginSessionLoading]);
-  const hasRunningThreads = threads.some(threadIsRunning);
-  useEffect(() => {
-    if (demo || !connected || !hasRunningThreads) return;
-    const timer = window.setInterval(() => {
-      if (!document.hidden) send({ type: "thread.list", refresh: true });
-    }, 7_500);
-    return () => window.clearInterval(timer);
-  }, [connected, send, hasRunningThreads]);
   useEffect(() => {
     if (!settings || demo || !connected) return;
     send({ type: "system.usage" });
@@ -1157,7 +1201,13 @@ export function App() {
     attachments: ComposerAttachment[],
     nextMode: CollaborationMode = mode,
   ) => {
-    if (running || submitting.current || sessionLoadingRef.current || workspaceSelectingRef.current)
+    if (
+      running ||
+      submitting.current ||
+      sessionLoadingRef.current ||
+      workspaceSelectingRef.current ||
+      permissionSavingRef.current
+    )
       return false;
     if (!activeRef.current && !metaRef.current.workspaceSelected) {
       setWorkspacePicker(true);
@@ -1175,7 +1225,6 @@ export function App() {
           workspaceToken: metaRef.current.workspaceToken,
           model,
           effort,
-          permission,
         });
         thread = created.find((entry) => entry.type === "thread.active")?.thread;
         if (!thread) {
@@ -1280,7 +1329,6 @@ export function App() {
         attachments,
         model,
         effort,
-        permission,
         collaborationMode: nextMode,
       });
       const accepted = result.some(
@@ -1602,12 +1650,17 @@ export function App() {
         : pendingInteractions,
     moreRecent: Boolean(threadCursors.recent),
     moreArchived: Boolean(threadCursors.archived),
-    loadMore: (view: "recent" | "archived") =>
-      send({
+    loadMore: (view: "recent" | "archived") => {
+      if (threadListLoading.current.has(view)) return;
+      threadListLoading.current.add(view);
+      const cursor = threadCursors[view];
+      return send({
         type: "thread.list",
         archived: view === "archived",
-        cursor: view === "archived" ? threadCursors.archived : threadCursors.recent,
-      }),
+        cursor,
+        refresh: !cursor,
+      }).finally(() => threadListLoading.current.delete(view));
+    },
   };
   const questions = items.filter(
     (item): item is Extract<UiItem, { type: "question" }> =>
@@ -1654,7 +1707,6 @@ export function App() {
       dismiss,
       model,
       effort,
-      permission,
     });
     const error = result.find((entry) => entry.type === "error");
     if (error) throw new Error(error.message);
@@ -1809,7 +1861,7 @@ export function App() {
   };
   return (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-      {boot.active && (
+      {boot.active && !connectionError && !boot.error && (
         <div className="boot-loading" role="status">
           <div className="boot-card">
             <span className="boot-spinner" />
@@ -1820,7 +1872,7 @@ export function App() {
           </div>
         </div>
       )}
-      {!boot.active && sessionLoading && (
+      {!boot.active && sessionLoading && !sessionLoading.silent && (
         <div className="boot-loading session-loading" role="status" aria-live="polite">
           <div className="boot-card compact">
             <span className="boot-spinner" />
@@ -1828,22 +1880,6 @@ export function App() {
               <b>{sessionLoading.label}</b>
             </div>
           </div>
-        </div>
-      )}
-      {!boot.active && boot.error && (
-        <div className="boot-error" role="alert">
-          <span>
-            <b>Codex startup failed</b>
-            <small>{boot.error}</small>
-          </span>
-          <button
-            onClick={() => {
-              setBoot({ active: true, stage: "Restarting Codex", error: "" });
-              send({ type: "runtime.restart" });
-            }}
-          >
-            Retry
-          </button>
         </div>
       )}
       <div className="desktop-sidebar">
@@ -1871,7 +1907,6 @@ export function App() {
             <div className="thread-heading">
               <strong>{title}</strong>
               <span>
-                <i className={connected || demo ? "online" : ""} />
                 {queued
                   ? "Waiting in queue"
                   : approvals.length
@@ -1887,17 +1922,6 @@ export function App() {
             </div>
           </div>
           <div className="header-actions">
-            <span className={`connection ${connected || demo ? "online" : ""}`}>
-              <i />
-              {connected || demo ? "Web UI online" : "Connecting"}
-            </span>
-            <button
-              className={`runtime-chip ${meta.codexStatus}`}
-              onClick={() => setSettings(true)}
-            >
-              <i />
-              Codex {queued ? "queued" : running ? "busy" : meta.codexStatus}
-            </button>
             {diff && (
               <button
                 className="header-button changes-button"
@@ -1933,6 +1957,24 @@ export function App() {
             </button>
           </div>
         </header>
+        {(connectionError || boot.error) && (
+          <div className="service-error" role="alert">
+            <span>{connectionError || boot.error}</span>
+            <button
+              onClick={() => {
+                if (connectionError) retryConnection();
+                else {
+                  setBoot({ active: true, stage: "Starting Codex", error: "" });
+                  send({
+                    type: meta.codexStatus === "stopped" ? "runtime.start" : "runtime.restart",
+                  });
+                }
+              }}
+            >
+              {connectionError ? "Retry connection" : "Start Codex"}
+            </button>
+          </div>
+        )}
         {!demo &&
           (!notificationPromptDismissed || Boolean(notifications.error)) &&
           (notifications.status !== "granted" || Boolean(notifications.error)) && (
@@ -2003,7 +2045,10 @@ export function App() {
             }}
             openFile={openWorkspaceFile}
             branch={branchFrom}
-            disabled={(!connected || meta.codexStatus !== "ready") && !demo}
+            disabled={
+              permissionSaving ||
+              ((!connected || meta.codexStatus !== "ready" || Boolean(sessionLoading)) && !demo)
+            }
             answer={answerQuestion}
             implementPlan={() => sendTurn("Implement the proposed plan above.", [], "default")}
             revisePlan={() => {
@@ -2032,7 +2077,10 @@ export function App() {
             running={running}
             queued={queued}
             restoreDraft={restoreDraft}
-            disabled={(!connected || meta.codexStatus !== "ready") && !demo}
+            disabled={
+              permissionSaving ||
+              ((!connected || meta.codexStatus !== "ready" || Boolean(sessionLoading)) && !demo)
+            }
             send={sendTurn}
             stop={() => {
               if (active) send({ type: "turn.interrupt", threadId: active.id, turnId });
@@ -2041,14 +2089,14 @@ export function App() {
             model={model}
             effort={effort}
             permission={permission}
-            configPermissionLabel={configPermissionLabel}
+            permissionError={permissionError}
             workspace={meta.workspaceSelected ? meta.workspace : ""}
             onChooseWorkspace={() => setWorkspacePicker(true)}
             threadUsage={threadUsage}
             compaction={compaction}
             onModel={setModel}
             onEffort={setEffort}
-            onPermission={setPermission}
+            onPermission={(next) => void changePermission(next)}
           />
         </main>
       </section>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { includedInSnapshot, type EventPosition } from "../event-replay";
 
 const apiBase = () => `${location.pathname.replace(/\/?$/, "/")}api`;
 
@@ -8,13 +9,18 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
   const cursor = useRef(0);
   const instance = useRef("");
   const [connected, setConnected] = useState(disabled);
-  const runningThreads = useRef(new Set<string>());
+  const [connectionError, setConnectionError] = useState("");
   const receipts = useRef(new Map<string, number>());
+  const seenEvents = useRef(new Set<string>());
+  const snapshots = useRef(new Map<string, EventPosition>());
   const wake = useRef<() => void>(() => {});
+  const pauseStream = useRef<() => void>(() => {});
+  const reconnect = useRef<() => void>(() => {});
   const requests = useRef(new Set<AbortController>());
   const mounted = useRef(true);
   const hydrating = useRef(0);
   const epoch = useRef(0);
+  const threadListVersion = useRef(0);
 
   const request = useCallback(async (url: string, init?: RequestInit, timeout = 12_000) => {
     const controller = new AbortController();
@@ -33,28 +39,19 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
 
   const deliver = useCallback((message: any) => {
     if (!mounted.current) return;
+    if (message.eventId) {
+      if (seenEvents.current.has(message.eventId)) return;
+      seenEvents.current.add(message.eventId);
+      while (seenEvents.current.size > 1000)
+        seenEvents.current.delete(seenEvents.current.values().next().value!);
+    }
     if (message.messageId && message.receiptVersion) {
       if ((receipts.current.get(message.messageId) || 0) >= message.receiptVersion) return;
       receipts.current.set(message.messageId, message.receiptVersion);
       while (receipts.current.size > 256)
         receipts.current.delete(receipts.current.keys().next().value!);
     }
-    if (message.type === "status" && ["stopped", "error"].includes(message.codexStatus))
-      runningThreads.current.clear();
-    const id = message.threadId || message.thread?.id;
-    if (id) {
-      const running =
-        message.type === "turn.queued"
-          ? true
-          : message.type === "turn.accepted"
-            ? message.running !== false
-            : message.type === "turn.failed"
-              ? false
-              : message.queued ||
-                (message.threadStatus ? message.threadStatus.type === "active" : message.running);
-      if (running === true) runningThreads.current.add(id);
-      else if (running === false) runningThreads.current.delete(id);
-    }
+    if (message.type === "thread.mutated") threadListVersion.current++;
     handler.current(message);
   }, []);
 
@@ -63,20 +60,139 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
     if (disabled) return;
     let live = true;
     let timer = 0;
-    let polling = false;
+    let warning = 0;
+    let watchdog = 0;
+    let disconnected = false;
     let failures = 0;
     let resync = false;
     let bootstrapped = false;
+    let bootstrapping = false;
+    let stream: EventSource | null = null;
+    let lastActivity = 0;
     const base = apiBase();
-    const schedule = (delay: number, next = poll) => {
+    const schedule = (delay: number, next: () => void) => {
       window.clearTimeout(timer);
       if (live) timer = window.setTimeout(next, delay);
     };
-    const bootstrap = async () => {
+    const closeStream = () => {
+      const source = stream;
+      stream = null;
+      source?.close();
+      window.clearTimeout(watchdog);
+    };
+    const failed = (message = "Live updates are interrupted. Reconnecting automatically…") => {
+      if (!live) return;
+      setConnected(false);
+      if (disconnected) return;
+      disconnected = true;
+      warning = window.setTimeout(() => {
+        if (live && disconnected) setConnectionError(message);
+      }, 4_000);
+    };
+    const clearFailure = () => {
+      disconnected = false;
+      window.clearTimeout(warning);
+      setConnectionError("");
+    };
+    const healthy = () => {
+      clearFailure();
+      failures = 0;
+      setConnected(true);
+    };
+    const retryDelay = () => Math.min(30_000, 1000 * 2 ** Math.min(failures++, 5));
+    const reset = () => {
+      closeStream();
+      failed("Session updates were interrupted. Restoring the connection automatically…");
+      resync = true;
+      bootstrapped = false;
+      schedule(0, bootstrap);
+    };
+    const connect = () => {
+      if (!live || !bootstrapped || bootstrapping || hydrating.current || stream) return;
+      if (!navigator.onLine) {
+        failed();
+        return;
+      }
+      window.clearTimeout(timer);
+      let source: EventSource;
       try {
+        source = new EventSource(
+          `${base}/events/stream?cursor=${cursor.current}&instance=${encodeURIComponent(instance.current)}`,
+        );
+      } catch {
+        failed("Live updates could not be opened. Retry the connection.");
+        schedule(retryDelay(), connect);
+        return;
+      }
+      stream = source;
+      lastActivity = Date.now();
+      const current = () => live && stream === source;
+      const interrupted = () => {
+        if (!current()) return;
+        closeStream();
+        failed();
+        schedule(retryDelay(), connect);
+      };
+      const checkHeartbeat = () => {
+        if (!current()) return;
+        const remaining = 45_000 - (Date.now() - lastActivity);
+        if (remaining <= 0) interrupted();
+        else watchdog = window.setTimeout(checkHeartbeat, remaining);
+      };
+      // Also detect a proxy accepting headers without delivering the event stream.
+      watchdog = window.setTimeout(interrupted, 12_000);
+      source.addEventListener("ready", (event) => {
+        if (!current()) return;
+        try {
+          const data = JSON.parse((event as MessageEvent).data);
+          if (data.instance !== instance.current) return reset();
+        } catch {
+          return interrupted();
+        }
+        lastActivity = Date.now();
+        window.clearTimeout(watchdog);
+        watchdog = window.setTimeout(checkHeartbeat, 45_000);
+        healthy();
+      });
+      source.addEventListener("ping", () => {
+        if (current()) lastActivity = Date.now();
+      });
+      source.addEventListener("reset", () => {
+        if (current()) reset();
+      });
+      source.onmessage = (event) => {
+        if (!current() || hydrating.current) return;
+        lastActivity = Date.now();
+        let data: any;
+        try {
+          data = JSON.parse(event.data);
+          if (data.instance !== instance.current || !Number.isSafeInteger(data.cursor))
+            return reset();
+          if (data.cursor <= cursor.current) return;
+          if (data.cursor !== cursor.current + 1 || !data.message) return reset();
+        } catch {
+          return interrupted();
+        }
+        cursor.current = data.cursor;
+        const threadId = data.message.threadId || data.message.thread?.id;
+        const snapshot = snapshots.current.get(threadId);
+        if (includedInSnapshot(data, snapshots.current)) return;
+        if (snapshot && data.cursor >= snapshot.cursor) snapshots.current.delete(threadId);
+        deliver(data.message);
+      };
+      source.onerror = interrupted;
+    };
+    const bootstrap = async () => {
+      if (!live || bootstrapping) return;
+      if (!navigator.onLine) {
+        failed("The server is unreachable. Reconnecting automatically…");
+        return;
+      }
+      bootstrapping = true;
+      try {
+        const listVersion = threadListVersion.current;
         const data = await request(`${base}/bootstrap`);
         if (!live) return;
-        setConnected(true);
         if (data.meta)
           deliver({ type: "status", ...data.meta, runtime: data.runtime, bootstrap: true });
         deliver({
@@ -84,122 +200,98 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
           stage: data.stage || "starting",
           error: data.error || data.runtime?.lastError || "",
         });
+        if (data.settings) deliver({ type: "settings.updated", settings: data.settings });
         if (data.ready) {
-          bootstrapped = true;
-          if (instance.current !== (data.eventInstance || "")) receipts.current.clear();
+          if (instance.current !== (data.eventInstance || "")) {
+            receipts.current.clear();
+            seenEvents.current.clear();
+            snapshots.current.clear();
+          }
           cursor.current = data.eventCursor ?? 0;
           instance.current = data.eventInstance || "";
-          runningThreads.current = new Set(
-            (data.threads || [])
-              .filter((thread: any) => thread.status?.type === "active")
-              .map((thread: any) => thread.id),
-          );
           deliver({
             type: "models",
             models: data.models || [],
             defaultModel: data.defaultModel || "",
             defaultEffort: data.defaultEffort || "",
-            defaultPermission: data.defaultPermission || "ask",
-            defaultPermissionLabel:
-              data.defaultPermissionLabel || "Ask when needed (Codex default)",
           });
-          deliver({
-            type: "threads",
-            threads: data.threads || [],
-            nextCursor: data.nextCursor || null,
-            archived: false,
-          });
+          if (listVersion === threadListVersion.current)
+            deliver({
+              type: "threads",
+              threads: data.threads || [],
+              nextCursor: data.nextCursor || null,
+              archived: false,
+              refresh: resync,
+            });
           deliver({ type: "interactions.snapshot", interactions: data.pendingInteractions || [] });
           deliver({ type: "bootstrap.ready" });
+          bootstrapped = true;
           if (resync) {
             resync = false;
             deliver({ type: "events.reset" });
           }
-          failures = 0;
-          schedule(0);
           return;
         }
+        clearFailure();
+        failures = 0;
         if (data.stage === "error")
           deliver({
             type: "bootstrap.error",
             message: data.runtime?.lastError || "Codex failed to start",
           });
         schedule(data.stage === "error" ? 2500 : 600, bootstrap);
-      } catch (error) {
+      } catch {
         if (!live) return;
-        setConnected(false);
-        deliver({
-          type: "bootstrap.error",
-          message: error instanceof Error ? error.message : "Connection failed",
-        });
-        schedule(Math.min(30_000, 1000 * 2 ** Math.min(++failures, 5)), bootstrap);
+        failed("Session updates could not be loaded. Retrying automatically…");
+        schedule(retryDelay(), bootstrap);
+      } finally {
+        bootstrapping = false;
+        if (live && bootstrapped) connect();
       }
     };
-    const poll = async () => {
-      if (!live) return;
-      if (polling || hydrating.current) {
-        schedule(150);
-        return;
-      }
-      polling = true;
-      const stamp = epoch.current;
-      let more = false;
-      try {
-        const data = await request(
-          `${base}/events?cursor=${cursor.current}&instance=${encodeURIComponent(instance.current)}`,
-        );
-        if (!live) return;
-        if (stamp === epoch.current) {
-          if (data.reset) {
-            resync = true;
-            bootstrapped = false;
-            polling = false;
-            schedule(0, bootstrap);
-            return;
-          }
-          cursor.current = data.cursor ?? cursor.current;
-          instance.current = data.instance || instance.current;
-          for (const event of data.events || []) deliver(event.message);
-          more = Boolean(data.more);
-        }
-        failures = 0;
-        setConnected(true);
-      } catch {
-        if (live) {
-          setConnected(false);
-          failures++;
-        }
-      } finally {
-        polling = false;
-      }
-      schedule(
-        failures
-          ? Math.min(30_000, 1000 * 2 ** Math.min(failures, 5))
-          : more
-            ? 0
-            : document.hidden
-              ? runningThreads.current.size
-                ? 5_000
-                : 15_000
-              : runningThreads.current.size
-                ? 650
-                : 2500,
-      );
+    const resume = () => {
+      if (!live || hydrating.current) return;
+      if (bootstrapped) connect();
+      else if (!bootstrapping) schedule(0, bootstrap);
+    };
+    const retry = () => {
+      failures = 0;
+      closeStream();
+      window.clearTimeout(timer);
+      resume();
     };
     const visible = () => {
-      if (!document.hidden) schedule(0, bootstrapped ? poll : bootstrap);
+      if (document.hidden) return;
+      if (stream && Date.now() - lastActivity >= 45_000) closeStream();
+      resume();
     };
-    wake.current = visible;
+    const offline = () => {
+      closeStream();
+      window.clearTimeout(timer);
+      failed();
+    };
+    wake.current = resume;
+    pauseStream.current = () => {
+      closeStream();
+      window.clearTimeout(timer);
+    };
+    reconnect.current = retry;
     document.addEventListener("visibilitychange", visible);
-    window.addEventListener("online", visible);
+    window.addEventListener("online", retry);
+    window.addEventListener("offline", offline);
     void bootstrap();
     return () => {
       live = false;
       mounted.current = false;
       wake.current = () => {};
+      pauseStream.current = () => {};
+      reconnect.current = () => {};
+      closeStream();
       window.clearTimeout(timer);
+      window.clearTimeout(warning);
       document.removeEventListener("visibilitychange", visible);
-      window.removeEventListener("online", visible);
+      window.removeEventListener("online", retry);
+      window.removeEventListener("offline", offline);
       for (const controller of requests.current) controller.abort();
     };
   }, [disabled, deliver, request]);
@@ -207,10 +299,12 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
   const send = useCallback(
     async (message: any): Promise<any[]> => {
       if (disabled) return [];
+      const listVersion = threadListVersion.current;
       const hydrate = ["thread.resume", "thread.fork"].includes(message.type);
+      const stamp = hydrate ? ++epoch.current : epoch.current;
       if (hydrate) {
         hydrating.current++;
-        epoch.current++;
+        pauseStream.current();
       }
       try {
         const data = await request(
@@ -224,9 +318,20 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
         );
         const messages = data.messages || [];
         for (const item of messages) {
-          if (hydrate && item.type === "thread.active" && typeof item.eventCursor === "number") {
-            cursor.current = item.eventCursor;
-            instance.current = item.eventInstance || instance.current;
+          if (item.type === "threads" && listVersion !== threadListVersion.current) continue;
+          if (hydrate && item.type === "thread.active") {
+            if (stamp !== epoch.current) continue;
+            if (typeof item.eventCursor === "number" && item.thread?.id) {
+              // Keep the global cursor: other sessions may have changed during hydration.
+              // Only replayed deltas already included in this thread's snapshot are skipped.
+              snapshots.current.delete(item.thread.id);
+              snapshots.current.set(item.thread.id, {
+                cursor: item.eventCursor,
+                instance: item.eventInstance || instance.current,
+              });
+              while (snapshots.current.size > 32)
+                snapshots.current.delete(snapshots.current.keys().next().value!);
+            }
           }
           deliver({
             ...item,
@@ -273,5 +378,6 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
     },
     [disabled, deliver, request],
   );
-  return { connected, send };
+  const retry = useCallback(() => reconnect.current(), []);
+  return { connected, connectionError, retry, send };
 }

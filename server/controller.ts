@@ -17,6 +17,7 @@ import type { EventHub } from "./event-hub.js";
 import { HistoryReader, type HistoryEntry } from "./history.js";
 import { TurnQueue } from "./turn-queue.js";
 import { processTreeMemory } from "./resources.js";
+import type { PermissionPreset, WebUiSettings } from "./settings.js";
 
 const sourceKinds = [
   "cli",
@@ -30,7 +31,7 @@ const sourceKinds = [
   "subAgentOther",
   "unknown",
 ];
-const threadPermissionSettings = (permission: unknown) =>
+const threadPermissionSettings = (permission: PermissionPreset) =>
   permission === "config"
     ? {}
     : permission === "full"
@@ -38,7 +39,11 @@ const threadPermissionSettings = (permission: unknown) =>
       : permission === "read-only"
         ? { approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: "read-only" }
         : { approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: "workspace-write" };
-const turnPermissionSettings = (permission: unknown, cwd: string, sessionDirectory: string) =>
+const turnPermissionSettings = (
+  permission: PermissionPreset,
+  cwd: string,
+  sessionDirectory: string,
+) =>
   permission === "config"
     ? {}
     : permission === "full"
@@ -64,57 +69,6 @@ const turnPermissionSettings = (permission: unknown, cwd: string, sessionDirecto
               excludeSlashTmp: false,
             },
           };
-const permissionDefaults = (config: any) => {
-  const profile = config?.default_permissions ?? config?.defaultPermissions;
-  const sandbox = config?.sandbox_mode ?? config?.sandboxMode;
-  const approval = config?.approval_policy ?? config?.approvalPolicy;
-  const reviewer = config?.approvals_reviewer ?? config?.approvalsReviewer;
-  const customizedReviewer = reviewer != null && reviewer !== "user";
-  const workspaceWrite = config?.sandbox_workspace_write ?? config?.sandboxWorkspaceWrite ?? {};
-  const roots = workspaceWrite.writable_roots ?? workspaceWrite.writableRoots;
-  const customizedWorkspaceWrite =
-    (Array.isArray(roots) && roots.length > 0) ||
-    (workspaceWrite.network_access ?? workspaceWrite.networkAccess) === true ||
-    (workspaceWrite.exclude_tmpdir_env_var ?? workspaceWrite.excludeTmpdirEnvVar) === true ||
-    (workspaceWrite.exclude_slash_tmp ?? workspaceWrite.excludeSlashTmp) === true;
-  let mode: "ask" | "full" | "read-only" | "config" = "config";
-  if (!customizedReviewer) {
-    if (profile === ":danger-full-access" && approval === "never") mode = "full";
-    else if (profile === ":read-only" && (approval == null || approval === "on-request"))
-      mode = "read-only";
-    else if (profile === ":workspace" && (approval == null || approval === "on-request"))
-      mode = "ask";
-    else if (!profile && sandbox === "danger-full-access" && approval === "never") mode = "full";
-    else if (!profile && sandbox === "read-only" && (approval == null || approval === "on-request"))
-      mode = "read-only";
-    else if (
-      !profile &&
-      (sandbox === "workspace-write" || !sandbox) &&
-      (approval == null || approval === "on-request") &&
-      !customizedWorkspaceWrite
-    )
-      mode = "ask";
-  }
-  const labels = {
-    ask: "Ask when needed",
-    full: "Full access",
-    "read-only": "Read-only",
-    config: "Custom Codex config",
-  };
-  const approvalLabel =
-    typeof approval === "string" ? approval : approval?.granular ? "granular" : "";
-  const detail =
-    profile ||
-    (customizedWorkspaceWrite
-      ? "sandbox_workspace_write"
-      : customizedReviewer
-        ? `approvals_reviewer=${reviewer}`
-        : [sandbox, approvalLabel].filter(Boolean).join(" + ") || "Codex defaults");
-  return {
-    defaultPermission: mode,
-    defaultPermissionLabel: `${labels[mode]}${mode === "config" ? ` (${detail})` : " (config.toml)"}`,
-  };
-};
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const WEB_UI_CONTEXT_PREFIX = "[Codex Web thread files]";
 const threadFileContext = (threadId: string, directory: string, attachmentPaths: string[]) =>
@@ -235,6 +189,12 @@ export class CodexController {
   private fileAncestors = new Map<string, string[]>();
   private stateRevision = 0;
   private stateRevisions = new Map<string, number>();
+  private threadSummaries = new Map<string, { thread: any; archived: boolean; bytes: number }>();
+  private summaryBytes = 0;
+  private pendingSummaries = new Set<string>();
+  private summaryTimer?: ReturnType<typeof setTimeout>;
+  private summaryBusy = false;
+  private summaryGeneration = 0;
 
   constructor(
     private codex: CodexClient,
@@ -242,11 +202,15 @@ export class CodexController {
     private attachments: AttachmentStore,
     private events: EventHub,
     private meta: () => any,
+    private settings: WebUiSettings,
   ) {
     this.history = new HistoryReader(codex);
     this.queue = new TurnQueue(
       (msg, cancelled) => this.startTurn(msg, cancelled),
-      (message) => this.events.push(message),
+      (message) => {
+        this.events.push(message);
+        if (message.threadId) this.scheduleThreadSummary(message.threadId);
+      },
       Math.max(1, Math.min(4, Math.floor(Number(process.env.CODEX_WEB_MAX_TURNS)) || 1)),
       8,
       () => [...this.runningThreads].filter((id) => !this.queue.status(id)).length,
@@ -254,6 +218,12 @@ export class CodexController {
     codex.on("status", (status) => {
       if (status === "starting") this.approvalGeneration = crypto.randomUUID();
       if (status === "stopped" || status === "error") {
+        this.summaryGeneration++;
+        clearTimeout(this.summaryTimer);
+        this.summaryTimer = undefined;
+        this.pendingSummaries.clear();
+        this.threadSummaries.clear();
+        this.summaryBytes = 0;
         this.runningThreads.clear();
         this.activeTurns.clear();
         for (const id of this.pendingApprovals.keys()) this.expireApproval(id);
@@ -308,6 +278,17 @@ export class CodexController {
         }
       }
       this.busy = this.runningThreads.size > 0;
+      if (
+        threadId &&
+        [
+          "turn/started",
+          "turn/completed",
+          "thread/status/changed",
+          "thread/name/updated",
+          "error",
+        ].includes(message.method)
+      )
+        this.scheduleThreadSummary(threadId);
       const question = userInputRequest(message);
       if (question && threadId) {
         this.rememberQuestion(threadId, question);
@@ -492,6 +473,7 @@ export class CodexController {
         stage: this.codex.status === "error" ? "error" : "starting",
         eventCursor: this.events.current,
         eventInstance: this.events.instance,
+        settings: this.settings.snapshot,
         runtime: this.runtime(),
         meta: { ...this.defaultWorkspaceMeta(), codexStatus: this.codex.status },
       };
@@ -513,6 +495,7 @@ export class CodexController {
       pendingInteractions: this.pendingInteractions(),
       meta: { ...this.defaultWorkspaceMeta(), codexStatus: this.codex.status },
       models: this.models,
+      settings: this.settings.snapshot,
       ...defaults,
       threads: (threadResult.data || []).map((thread: any) => ({
         ...threadSummary(thread),
@@ -531,10 +514,9 @@ export class CodexController {
       return {
         defaultModel: String(result?.config?.model || ""),
         defaultEffort: String(result?.config?.model_reasoning_effort || ""),
-        ...permissionDefaults(result?.config),
       };
     } catch {
-      return { defaultModel: "", defaultEffort: "", ...permissionDefaults(null) };
+      return { defaultModel: "", defaultEffort: "" };
     }
   }
 
@@ -605,7 +587,70 @@ export class CodexController {
     }
     this.busy = this.runningThreads.size > 0;
     this.queue.pump();
+    for (const thread of result.data || []) this.rememberThread(thread.id, thread, archived);
     return result;
+  }
+
+  private rememberThread(id: string, thread: any, archived: boolean) {
+    const summary = thread
+      ? { ...threadSummary(thread), queued: this.queue.status(id)?.queued || false }
+      : null;
+    const bytes = Buffer.byteLength(JSON.stringify(summary), "utf8");
+    this.summaryBytes -= this.threadSummaries.get(id)?.bytes || 0;
+    this.threadSummaries.delete(id);
+    this.threadSummaries.set(id, { thread: summary, archived, bytes });
+    this.summaryBytes += bytes;
+    while (this.threadSummaries.size > 256 || this.summaryBytes > 2 * 1024 * 1024) {
+      const oldest = this.threadSummaries.keys().next().value!;
+      this.summaryBytes -= this.threadSummaries.get(oldest)!.bytes;
+      this.threadSummaries.delete(oldest);
+    }
+    return summary;
+  }
+
+  private scheduleThreadSummary(threadId: string) {
+    if (this.codex.status !== "ready" || this.threadSummaries.get(threadId)?.thread === null)
+      return;
+    if (this.pendingSummaries.size < 128) this.pendingSummaries.add(threadId);
+    if (this.summaryBusy || this.summaryTimer || !this.pendingSummaries.size) return;
+    this.summaryTimer = setTimeout(() => {
+      this.summaryTimer = undefined;
+      void this.refreshThreadSummary();
+    }, 150);
+    this.summaryTimer.unref();
+  }
+
+  private async refreshThreadSummary() {
+    const threadId = this.pendingSummaries.values().next().value;
+    if (!threadId) return;
+    this.pendingSummaries.delete(threadId);
+    const previous = this.threadSummaries.get(threadId);
+    const generation = this.summaryGeneration;
+    const since = this.stateRevision;
+    this.summaryBusy = true;
+    try {
+      if (this.codex.status !== "ready" || previous?.thread === null) return;
+      const result = await this.codex.request("thread/read", { threadId, includeTurns: false });
+      if (!result.thread?.id) return;
+      // A later list response or mutation already supplied a newer summary.
+      if (generation !== this.summaryGeneration || this.threadSummaries.get(threadId) !== previous)
+        return;
+      const thread = threadSummary(result.thread);
+      if ((this.stateRevisions.get(threadId) || 0) > since)
+        thread.status = { type: this.runningThreads.has(threadId) ? "active" : "idle" };
+      const archived = previous?.archived || false;
+      this.events.push({
+        type: "thread.changed",
+        thread: this.rememberThread(threadId, thread, archived),
+        archived,
+      });
+    } catch {
+      // A disappearing thread or stopped runtime must not interrupt other event delivery.
+    } finally {
+      this.summaryBusy = false;
+      const next = this.pendingSummaries.values().next().value;
+      if (next) this.scheduleThreadSummary(next);
+    }
   }
 
   private async threadItems(thread: any, rawItems: HistoryEntry[]) {
@@ -775,6 +820,7 @@ export class CodexController {
 
   private async activate(result: any, since: number) {
     const thread = result.thread;
+    const previousSummary = this.threadSummaries.get(thread.id);
     this.activeThreadId = thread.id;
     this.modes.set(thread.id, result.collaborationMode?.mode === "plan" ? "plan" : "default");
     this.attachments.registerThread(thread.id);
@@ -850,9 +896,19 @@ export class CodexController {
       .filter((entry) => entry.threadId === thread.id)
       .map((entry) => entry.item);
     this.busy = this.runningThreads.size > 0;
+    const currentSummary = this.threadSummaries.get(thread.id);
+    const summary = {
+      ...thread,
+      ...(currentSummary !== previousSummary ? currentSummary?.thread : {}),
+      status: {
+        ...(typeof thread.status === "object" ? thread.status : {}),
+        type: this.runningThreads.has(thread.id) ? "active" : "idle",
+      },
+    };
     return {
       type: "thread.active",
-      thread: threadSummary(thread),
+      thread: this.rememberThread(thread.id, summary, false),
+      settings: this.settings.snapshot,
       workspace,
       ...defaults,
       ...page,
@@ -880,7 +936,8 @@ export class CodexController {
     if (!cwd) throw new Error("Thread workspace is unavailable; reopen the session");
     if (cancelled()) throw new Error("Turn cancelled");
     const sessionDirectory = await this.attachments.directoryFor(threadId);
-    if (msg.permission === "config")
+    const permission = this.settings.snapshot.permission;
+    if (permission === "config")
       await this.applyConfiguredPermission(threadId, cwd, sessionDirectory);
     const persisted = msg.attachments?.length
       ? await this.attachments.save(threadId, messageId, msg.text, msg.attachments)
@@ -914,7 +971,7 @@ export class CodexController {
             developer_instructions: null,
           },
         },
-        ...turnPermissionSettings(msg.permission, cwd, sessionDirectory),
+        ...turnPermissionSettings(permission, cwd, sessionDirectory),
         summary: "auto",
       });
       this.modes.set(threadId, mode);
@@ -998,16 +1055,44 @@ export class CodexController {
         }
       }
     } else messages = await this.handleAction(msg);
-    return messages.map((message) => ({
-      ...message,
-      requestId: message.requestId ?? msg.requestId,
-      action: message.action ?? msg.type,
-      requestThreadId: msg.threadId,
-    }));
+    return messages.map((message) => {
+      if (message.type === "thread.changed")
+        message = {
+          ...message,
+          thread: this.rememberThread(message.thread.id, message.thread, Boolean(message.archived)),
+        };
+      if (message.type === "thread.mutated") {
+        const thread =
+          message.action === "delete"
+            ? null
+            : message.thread || this.threadSummaries.get(message.threadId)?.thread;
+        const summary = this.rememberThread(message.threadId, thread, message.action === "archive");
+        this.pendingSummaries.delete(message.threadId);
+        if (summary) message = { ...message, thread: summary };
+      }
+      if (["thread.changed", "thread.mutated"].includes(message.type)) {
+        message = { ...message, eventId: crypto.randomUUID() };
+        this.events.push(message);
+      }
+      return {
+        ...message,
+        requestId: message.requestId ?? msg.requestId,
+        action: message.action ?? msg.type,
+        requestThreadId: msg.threadId,
+      };
+    });
   }
 
   private async handleAction(msg: any): Promise<any[]> {
     try {
+      if (msg.type === "settings.read")
+        return [{ type: "settings.updated", settings: this.settings.snapshot }];
+      if (msg.type === "settings.update") {
+        const settings = await this.settings.updatePermission(msg.permission);
+        const message = { type: "settings.updated", settings };
+        this.events.push(message);
+        return [message];
+      }
       if (msg.type === "thread.list") {
         const result = await this.listThreads(
           Boolean(msg.archived),
@@ -1040,7 +1125,7 @@ export class CodexController {
         const result = await this.codex.request("thread/start", {
           cwd: scope.path,
           model: msg.model || null,
-          ...threadPermissionSettings(msg.permission),
+          ...threadPermissionSettings(this.settings.snapshot.permission),
           experimentalRawEvents: false,
         });
         this.attachments.bindThread(result.thread.id, result.thread.cwd || scope.path);
@@ -1050,6 +1135,7 @@ export class CodexController {
           {
             type: "thread.active",
             thread,
+            settings: this.settings.snapshot,
             workspace: { ...this.workspaceMeta(scope), sessionFileThreads: [thread.id] },
             items: [],
             historyCursor: null,
@@ -1067,6 +1153,9 @@ export class CodexController {
             await this.codex.request("thread/resume", {
               threadId: msg.threadId,
               excludeTurns: true,
+              ...(this.runningThreads.has(msg.threadId)
+                ? {}
+                : threadPermissionSettings(this.settings.snapshot.permission)),
             }),
             since,
           ),
@@ -1080,6 +1169,7 @@ export class CodexController {
           threadId: msg.threadId,
           lastTurnId,
           excludeTurns: true,
+          ...threadPermissionSettings(this.settings.snapshot.permission),
         });
         return [
           await this.activate(result, since),
@@ -1241,7 +1331,6 @@ export class CodexController {
                 clientUserMessageId: messageId,
                 model: msg.model,
                 effort: msg.effort,
-                permission: msg.permission,
                 collaborationMode: this.modes.get(msg.threadId) || "default",
               });
               this.events.push({

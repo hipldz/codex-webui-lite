@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import type { PendingInteraction, Thread } from "../types";
 import { threadIsRunning } from "../thread-status";
 import { CodexLogo } from "./CodexLogo";
+import { ThreadList } from "./ThreadList";
 
 function when(time: number) {
   const days = Math.floor((Date.now() / 1000 - time) / 86400);
@@ -196,13 +197,14 @@ export function Sidebar({
           </button>
         </div>
       )}
-      <div className="thread-list">
+      <ThreadList view={view} query={query}>
         {visibleThreads.length ? (
           <>
             {visibleThreads.map((thread) => (
               <div
                 className={`thread ${active === thread.id ? "active" : ""} ${selecting ? "selecting" : ""}`}
                 key={thread.id}
+                data-thread-id={thread.id}
               >
                 <button
                   className="thread-main"
@@ -307,7 +309,7 @@ export function Sidebar({
                 : "No recent threads"}
           </div>
         )}
-      </div>
+      </ThreadList>
     </aside>
   );
 }

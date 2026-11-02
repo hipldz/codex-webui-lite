@@ -1,6 +1,6 @@
 # Codex Web UI
 
-一个运行在本机的轻量 Codex Web UI。浏览器通过 HTTP API 和增量轮询连接 Node 服务，Node 再通过 stdio JSON-RPC 管理常驻的 `codex app-server`。
+一个运行在本机的轻量 Codex Web UI。浏览器通过 SSE 事件流和 HTTP 操作接口连接 Node 服务，Node 再通过 stdio JSON-RPC 管理常驻的 `codex app-server`。
 
 Codex 的登录状态、配置和 session 仍由 Codex 自己管理；Web UI 不读取或保存 Codex 凭据。
 
@@ -19,7 +19,7 @@ Codex 的登录状态、配置和 session 仍由 Codex 自己管理；Web UI 不
 - 每轮活动汇总为可展开的时间线；保留文件/命令摘要和历史 context compact 记录
 - 执行中原生提问：选项、自定义回答、多问题导航、快捷提交、待回答提示、草稿恢复与提交回执；同时支持阻塞问题和非阻塞问题
 - Code / Plan 模式切换；原生计划以独立卡片展示，完成后可确认执行或继续修改
-- Composer 可选择会话权限：按需确认、Full access（无 sandbox / 无审批）或只读；设置会作用于后续 turn
+- Composer 可设置整个 Web UI 的权限：按需确认、Full access（无 sandbox / 无审批）、只读或跟随 Codex 配置；服务端持久保存，所有会话的后续 turn 统一使用
 - 可在输入框粘贴或选择任意类型文件作为附件；图片支持点击预览，所有附件均会在会话中保留并可下载
 - 输入框附件单条消息最多 4 个，单个文件和所有附件合计均限制为 10 MB；附件直接保存在 `${CODEX_HOME}/web-ui/<thread.id>/`（默认 `~/.codex/web-ui/<thread.id>/`），每轮会把具体文件路径告诉 Codex；文本、图片和音频也会直接传入模型，其他二进制文件可由 Codex 按路径读取
 - 文件树、文本文件创建/删除、预览、编辑与下载；Project files 与 Session files 分开浏览和上传
@@ -33,7 +33,7 @@ Codex 的登录状态、配置和 session 仍由 Codex 自己管理；Web UI 不
 
 任务成功完成、收到待回答问题或待审批请求时发送系统通知，包括当前打开和其他会话的新事件；失败、手动停止、恢复历史或刷新列表不会触发成功通知。同一页面收到重复事件不会重复通知。点击通知会聚焦页面，必要时打开对应的 `?session=<id>` 会话，问题和审批通知会定位到相应请求，并保留部署子路径。
 
-通知需要 **HTTPS 或 localhost**；通过普通 HTTP 的远程 IP/域名访问时不可用。网页需保持打开，切换标签页或最小化浏览器仍可接收，但后台轮询和浏览器节流可能带来延迟。关闭网页后的通知需要额外实现 Web Push，本版本不包含该能力。系统是否弹出提示、播放声音仍由浏览器通知设置及 Windows 勿扰模式决定。演示页面不会自动申请权限或发送任务通知。
+通知需要 **HTTPS 或 localhost**；通过普通 HTTP 的远程 IP/域名访问时不可用。网页需保持打开，切换标签页或最小化浏览器仍可接收，但浏览器节流和系统休眠可能带来延迟。关闭网页后的通知需要额外实现 Web Push，本版本不包含该能力。系统是否弹出提示、播放声音仍由浏览器通知设置及 Windows 勿扰模式决定。演示页面不会自动申请权限或发送任务通知。
 
 ## 提问与计划交互
 
@@ -116,7 +116,13 @@ npm run format:check
 
 生成目录、依赖目录、运行文件和 npm 管理的 `package-lock.json` 通过 `.prettierignore` 排除。
 
-## 会话权限
+## Web UI 全局权限
+
+在输入框的权限菜单选择一次即可应用到整个 Web UI，包括新建、恢复和分支会话。设置保存在 `${CODEX_HOME}/web-ui/settings.json`（默认 `~/.codex/web-ui/settings.json`），刷新页面、切换 workspace、换浏览器或重启 Web 服务后仍保持。其他已打开页面也会同步更新。首次未设置时使用 **Ask when needed**。
+
+选择 **Full access** 后，后端会直接应用无 sandbox、无审批的预设，不需要修改 `config.toml`。后端始终以已保存的 Web UI 设置为准，不使用旧页面随消息携带的权限值。修改从尚未启动的轮次开始生效，已在执行的轮次保持原策略；排队中的任务启动时采用当时保存的设置。保存失败会显示错误并保留原设置。
+
+只有主动选择 **Use config.toml** 时，权限才跟随当前 workspace 的 Codex 有效配置；此选择本身也会保存为 Web UI 全局设置。Web UI 的权限设置独立保存，不会修改 CLI 或 VS Code 使用的 `config.toml`。
 
 Codex 的会话权限是多个设置组合出来的，不是单一的“权限等级”：
 
@@ -196,16 +202,9 @@ approval_policy = { granular = { sandbox_approval = true, rules = true, mcp_elic
 
 `approval_policy = "untrusted"` 已不再是可直接选择的策略，`on-failure` 已弃用；旧配置应改用受支持的策略。项目的 `trust_level = "untrusted"` 是另一项设置，仍可用于项目级信任管理。[Codex 配置参考](https://developers.openai.com/codex/config-reference/)
 
-Web UI 的权限菜单目前提供 **Ask when needed**、**Full access**、**Read-only** 和 **Use config.toml**，没有单独的 Approve for me 或 granular 按钮。页面会读取当前 workspace 的有效配置；命名权限方案、自动 reviewer、自定义 sandbox 规则、granular 策略或其他非标准组合应选择 **Use config.toml**，这样已有会话也会在发送下一条消息前应用配置。手动选择 Ask、Full 或 Read-only 时，则使用对应预设，并将 reviewer 设为 `user`。
+Web UI 的权限菜单提供 **Ask when needed**、**Full access**、**Read-only** 和 **Use config.toml**，没有单独的 Approve for me 或 granular 按钮。需要命名权限方案、自动 reviewer、自定义 sandbox 规则、granular 策略或其他非标准组合时，选择 **Use config.toml**，已有会话也会在发送下一条消息前应用当前 workspace 的配置。选择 Ask、Full 或 Read-only 时，则统一使用 Web UI 对应预设，并将 reviewer 设为 `user`，项目权限默认配置不会覆盖这个选择。
 
-要让页面默认显示并使用 **Full access**，在运行 Web 服务的同一用户的 `$CODEX_HOME/config.toml` 中（未设置 `CODEX_HOME` 时是 `~/.codex/config.toml`）设置：
-
-```toml
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-```
-
-重启 Web 服务并重新载入页面。配置生效后，权限菜单应显示 **Full access**。若项目可信，也可以在 workspace 下的 `.codex/config.toml` 配置项目级默认。不要把 `default_permissions` 与旧式 `sandbox_mode` 或 `[sandbox_workspace_write]` 混用；使用命名权限方案时保留该方案，并在页面选择 **Use config.toml**。[Codex 配置参考](https://developers.openai.com/codex/config-reference/)
+使用 **Use config.toml** 时，不要把 `default_permissions` 与旧式 `sandbox_mode` 或 `[sandbox_workspace_write]` 混用；命名权限方案保持其原始定义。[Codex 配置参考](https://developers.openai.com/codex/config-reference/)
 
 `Full access` 会允许 Codex 在当前运行账户的权限范围内执行命令。只应在本机、可信 workspace 和已理解任务影响时使用。
 
@@ -406,7 +405,7 @@ systemd 和 `scripts/codex-web.sh` 不要同时管理同一个实例。
 页面会先加载最近 50 个本地 session。workspace 的选择规则如下：
 
 - 打开已有 session 或刷新带 `?session=<id>` 的地址时，恢复该 session 自己的 workspace。
-- 每次点击 **New thread** 时，恢复 `CODEX_WEB_DEFAULT_WORKSPACE` 指定的目录，并重新读取该目录的模型、reasoning effort 与权限默认配置。
+- 每次点击 **New thread** 时，恢复 `CODEX_WEB_DEFAULT_WORKSPACE` 指定的目录，并重新读取该目录的模型与 reasoning effort 默认配置；权限保持 Web UI 的全局设置。
 - 未设置默认目录，或启动时发现目录不存在、不是目录或无法访问时，新建对话需手动选择 workspace；不会将 Web UI 项目目录或上一个 session 的目录自动当成已选 workspace。
 - 新对话首次发送前可以手动选择其他目录，本次对话使用该目录；再次点击 **New thread** 时仍恢复配置的默认目录。仅浏览或取消目录选择器不会改变当前 workspace。
 - Workspace 选择器从当前工作目录开始；无已选目录时从服务账号的主目录开始。可以向上浏览到文件系统根目录，输入绝对路径、`~` 路径或相对文件系统根目录的路径，也可显示隐藏目录及进入符号链接目录。Windows 下可以通过输入绝对路径切换盘符。
@@ -526,6 +525,10 @@ Nginx 可以负责 TLS 和反向代理，但不能替代 Node。Node 仍需要�
 ```nginx
 location /codex/ {
     proxy_pass http://127.0.0.1:8765/codex/;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_read_timeout 75s;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
@@ -538,7 +541,7 @@ location /codex/ {
 export CODEX_WEB_BASE_PATH=/codex
 ```
 
-页面静态资源、轮询和操作 API 都会使用同一个 base path。
+页面静态资源、SSE 事件流和操作 API 都会使用同一个 base path。浏览器通过 SSE 接收生成内容和会话变更，操作仍使用 HTTP POST。事件流带游标补发、心跳和自动重连；短暂断线静默恢复，持续中断才显示可重试的错误提示。反向代理需关闭响应缓冲，并允许长连接，上面的配置已包含这些设置。
 
 聊天回答中的本地文件链接也会使用该 base path。例如设置 `/codex` 后，workspace 文件链接会转换为：
 
@@ -597,11 +600,11 @@ Files 搜索会查找子目录中的文件名/相对路径，跳过构建产物�
 
 每条已完成的 Codex 文本回复下方提供复制与分支操作。复制会保留回答的原始 Markdown；分支使用 app-server 原生 `thread/fork` 与该回复的 `lastTurnId` 创建新 session，只保留到这条回复为止，后续对话不会带入，原 session 也不会被修改。这里不提供点赞、点踩等无关操作。Thread/Turn 提供的时间会显示在用户与 Codex 消息下方；历史消息使用 turn 开始/完成时间，实时消息使用 item 事件时间。
 
-点击 New thread 时，默认模型、reasoning effort 与权限会按默认 workspace 的有效 `config.toml` 重新加载；手动选择其他 workspace 后，改为读取所选目录的配置。模型与 reasoning effort 对应 `model`、`model_reasoning_effort`；仅在配置未指定时，才回退到 app-server 模型目录中标记为默认的模型。
+点击 New thread 时，默认模型与 reasoning effort 会按默认 workspace 的有效 `config.toml` 重新加载；手动选择其他 workspace 后，改为读取所选目录的配置。模型与 reasoning effort 对应 `model`、`model_reasoning_effort`；仅在配置未指定时，才回退到 app-server 模型目录中标记为默认的模型。权限独立使用服务端持久保存的 Web UI 全局设置，打开会话或切换目录不会重置；选择 **Use config.toml** 时才在新轮次开始前应用所选目录的权限配置。
 
 ## 内存说明
 
-Node 不维护浏览器 WebSocket。浏览器在生成时高频拉取增量状态，空闲时自动降频，页面隐藏时降为 15 秒；提交新 turn 后会立即唤醒轮询。Session 列表从 app-server 分页加载，打开会话按每页 30 个原始 item 加载，更早内容按需加载，不再截断到最后 500 个 item，Settings 关闭时不会持续读取资源数据。
+浏览器通过一条 SSE 长连接接收增量事件，操作继续使用 HTTP POST。服务端在任务状态和会话标题变化时合并读取单个会话摘要并推送，不再由浏览器每 7.5 秒刷新整个列表。Session 列表仍从 app-server 分页加载，刷新保留已加载的历史页和现有条目位置。打开会话按每页 30 个原始 item 加载，更早内容按需加载，不再截断到最后 500 个 item，Settings 关闭时不会持续读取资源数据。
 
 会话 JSON 不包含 app-server 返回的原始 `turns`，工具输出和 diff 也有首包上限。生成图片通过受保护的图片 URL 单独读取，不会把 Base64 图片重复塞进会话响应。
 
@@ -620,7 +623,7 @@ RSS 包含 V8 之外的 Buffer 和原生内存，因此可能高于当前 heap u
 - Web UI 默认同时执行 **1 个 turn**，最多再排队 **8 个**；可通过 `CODEX_WEB_MAX_TURNS=1..4` 调整并行数。排队内容暂存在系统临时目录，避免 Base64 附件常驻 Node 堆；启动执行或取消后清除。停止/重启 Codex 会取消队列，不会在服务重启后自动执行旧任务。强制杀进程可能留下 `codex-web-queue-*` 临时目录，可在确认服务已停止后清理。
 - 并行限制针对此 Web UI 提交的任务，并会等待已发现的外部运行会话；不能替代操作系统对其他 Codex 实例、编译器或 MCP 进程的资源限制。
 - Node 不缓存打开过的完整会话。优先使用 `thread/items/list` 分页读取；不支持该接口的旧版 Codex 回退到 `thread/read`。旧版上游仍可能一次返回完整历史，因此超长会话建议升级 Codex。历史恢复请求串行执行，限制排队数量。
-- 增量事件缓冲同时限制 **1000 条 / 8 MiB**，每次轮询通常最多读取 **512 KiB**（单条较大事件单独返回）。游标失效、缓冲溢出或服务重启时，会重新同步当前会话。切回前台立即轮询，失败后退避重连。
+- 增量事件缓冲同时限制 **1000 条 / 8 MiB**，SSE 按通常最多 **512 KiB** 的批次补发（单条较大事件单独发送）。长连接每 15 秒发送心跳，客户端检测超时并退避重连；慢客户端暂停写入，持续阻塞会断开连接。游标失效、落后于缓冲窗口或服务重启时，会静默重新同步当前会话，保留侧边栏分页和滚动位置。正常连接不显示 Header 状态标签，持续断线超过 4 秒才显示可重试错误，恢复后自动清除。
 - HTTP 请求体限制 16 MiB，大请求只允许 1 个同时处理；文件预览/写入/上传最多同时处理 2 个。繁忙时返回可重试错误，不无限堆积请求。
 - `npm run build` 预生成 Brotli/Gzip 静态文件，生产服务直接流式发送压缩产物，不在每次请求时消耗 CPU 压缩。旧构建没有压缩文件时自动使用原文件。
 - Linux 的 Resources 面板采样 Node、app-server 和仍在进程树中的工具/MCP 子进程 RSS，并展示事件缓冲占用。RSS 相加可能重复计算共享内存；已脱离进程树的服务不在统计中。Windows 无 `/proc`，子进程采样显示不可用。
