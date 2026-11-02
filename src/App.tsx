@@ -25,8 +25,9 @@ import { demoItems, demoThreads, demoQuestionItems, demoPlanItems } from "./demo
 import { useApiTransport } from "./hooks/useApiTransport";
 import { useMobileViewport } from "./hooks/useMobileViewport";
 import { useTaskNotifications } from "./hooks/useTaskNotifications";
+import { useTheme } from "./hooks/useTheme";
 import { mergeThreadList, mergeThreadSummary } from "./thread-list";
-import { threadIsRunning } from "./thread-status";
+import { getBranchableResponseIds, threadIsRunning } from "./thread-status";
 import type {
   CollaborationMode,
   ApprovalDecision,
@@ -198,6 +199,7 @@ export function App() {
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
   const notifications = useTaskNotifications(demo);
+  const { theme, changeTheme } = useTheme();
   const { notifyTaskComplete, notifyInteraction } = notifications;
   const [notificationPromptDismissed, setNotificationPromptDismissed] = useState(false);
   const [boot, setBoot] = useState({
@@ -1150,12 +1152,14 @@ export function App() {
     if (
       !active ||
       !sourceTurnId ||
-      running ||
-      queued ||
+      submitting.current ||
+      permissionSavingRef.current ||
       sessionLoadingRef.current ||
       workspaceSelectingRef.current
     )
       return;
+    const branchableItems = getBranchableResponseIds({ items, running, queued, turnId });
+    if (!items.some((item) => item.turnId === sourceTurnId && branchableItems.has(item.id))) return;
     if (!mayChangeContext()) return;
     if (demo) {
       setFiles(false);
@@ -1171,13 +1175,20 @@ export function App() {
         ...active,
         id: `branch-${Date.now()}`,
         forkedFromId: active.id,
+        status: { type: "idle" },
+        queued: false,
         createdAt: Date.now() / 1000,
         updatedAt: Date.now() / 1000,
       };
       setThreads((old) => [thread, ...old]);
+      activeRef.current = thread;
       setActive(thread);
       updateSessionUrl(thread.id);
       setItems(branchItems);
+      setDiff(diffFromItems(branchItems));
+      setRunning(false);
+      setQueued(false);
+      setTurnId(undefined);
       return;
     }
     if (beginSessionLoading(`fork:${active.id}`, "Creating branch"))
@@ -1320,6 +1331,10 @@ export function App() {
           );
         let index = 0;
         const timer = window.setInterval(() => {
+          if (activeRef.current?.id !== submittedThreadId) {
+            window.clearInterval(timer);
+            return;
+          }
           setItems((old) =>
             mergeItems(old, [
               {
@@ -2225,6 +2240,8 @@ export function App() {
       {settings && (
         <SettingsDrawer
           close={() => setSettings(false)}
+          theme={theme}
+          changeTheme={changeTheme}
           meta={meta}
           connected={connected || demo}
           resources={resources}

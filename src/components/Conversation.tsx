@@ -17,7 +17,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FileScope, QuestionAnswers, UiItem } from "../types";
-import { getTurnProgress } from "../thread-status";
+import { getBranchableResponseIds, getTurnProgress } from "../thread-status";
 import { visibleUserText } from "../user-message";
 import {
   markdownUrlTransform,
@@ -494,24 +494,18 @@ export function Conversation({
     progress.phase === "queued" ||
     progress.phase === "starting" ||
     (progress.phase === "working" && !activeActivityId);
-  const branchableItems = useMemo(() => {
-    const result = new Set<string>();
-    const turns = new Set<string>();
-    // Finishing one reply does not finish the turn; hide all branch actions while busy.
-    if (running || queued || disabled) return result;
-    for (let index = items.length - 1; index >= 0; index--) {
-      const item = items[index];
-      if (
-        (item.type === "assistant_message" || item.type === "generated_image") &&
-        item.turnId &&
-        !turns.has(item.turnId)
-      ) {
-        result.add(item.id);
-        turns.add(item.turnId);
-      }
-    }
-    return result;
-  }, [items, running, queued, disabled]);
+  const branchableItems = useMemo(
+    () =>
+      disabled
+        ? new Set<string>()
+        : getBranchableResponseIds({
+            items,
+            running,
+            queued: Boolean(queued),
+            turnId: activeTurnId,
+          }),
+    [items, running, queued, activeTurnId, disabled],
+  );
   const latestPlan = [...items].reverse().find((item) => item.type === "plan");
   const lastUserIndex = items.reduce(
     (last, item, index) => (item.type === "user_message" ? index : last),
@@ -747,7 +741,6 @@ export function Conversation({
                       {segment.item.turnId && branchableItems.has(segment.item.id) && (
                         <button
                           type="button"
-                          disabled={running}
                           aria-label="Branch from this response"
                           title="Branch from this response"
                           onClick={() => branch(segment.item.turnId!)}
@@ -782,7 +775,6 @@ export function Conversation({
                   <div className="message-actions">
                     <button
                       type="button"
-                      disabled={running}
                       aria-label="Branch from this response"
                       title="Branch from this response"
                       onClick={() => branch(segment.item.turnId!)}

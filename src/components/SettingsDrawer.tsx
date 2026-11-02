@@ -1,5 +1,19 @@
-import { Activity, Bell, CircleGauge, Play, RefreshCw, Square, Timer, X } from "lucide-react";
+import {
+  Activity,
+  Bell,
+  CircleGauge,
+  Monitor,
+  Moon,
+  Palette,
+  Play,
+  RefreshCw,
+  Square,
+  Sun,
+  Timer,
+  X,
+} from "lucide-react";
 import type { BrowserNotificationControls } from "../hooks/useTaskNotifications";
+import type { ThemePreference } from "../hooks/useTheme";
 
 export type ResourceUsage = {
   rss: number;
@@ -67,6 +81,8 @@ export function SettingsDrawer({
   threadUsage,
   active,
   notifications,
+  theme,
+  changeTheme,
   runtimeAction,
 }: {
   close: () => void;
@@ -77,6 +93,8 @@ export function SettingsDrawer({
   threadUsage: ThreadUsage | null;
   active: boolean;
   notifications: BrowserNotificationControls;
+  theme: ThemePreference;
+  changeTheme: (theme: ThemePreference) => void;
   runtimeAction: (action: "start" | "stop" | "restart") => void;
 }) {
   const summary = account?.usage?.summary;
@@ -104,6 +122,32 @@ export function SettingsDrawer({
           </button>
         </header>
         <div className="settings-scroll">
+          <section className="settings-section appearance-settings">
+            <h3 id="appearance-heading">
+              <Palette />
+              Appearance
+            </h3>
+            <div className="theme-options" role="group" aria-labelledby="appearance-heading">
+              {(
+                [
+                  { value: "light", label: "Light", icon: Sun },
+                  { value: "dark", label: "Dark", icon: Moon },
+                  { value: "system", label: "System", icon: Monitor },
+                ] as const
+              ).map(({ value, label, icon: Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={theme === value}
+                  onClick={() => changeTheme(value)}
+                >
+                  <Icon aria-hidden="true" />
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p>System follows your device’s appearance. Your choice is saved in this browser.</p>
+          </section>
           <section className="settings-section notification-settings">
             <h3>
               <Bell />

@@ -49,3 +49,39 @@ export function getTurnProgress({
   else phase = "starting";
   return { phase, items: currentItems };
 }
+
+export function getBranchableResponseIds({
+  items,
+  running,
+  queued,
+  turnId,
+}: {
+  items: UiItem[];
+  running: boolean;
+  queued: boolean;
+  turnId?: string;
+}): Set<string> {
+  // A finished message can still belong to a running turn. Exclude that
+  // entire turn, while keeping earlier turns available during work or queuing.
+  const activeTurns = new Set(
+    running && !queued
+      ? getTurnProgress({ items, running, queued, turnId }).items.map((item) => item.turnId)
+      : [],
+  );
+  const result = new Set<string>();
+  const turns = new Set<string>();
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index];
+    if (
+      (item.type !== "assistant_message" && item.type !== "generated_image") ||
+      !item.turnId ||
+      turns.has(item.turnId)
+    )
+      continue;
+    turns.add(item.turnId);
+    if (activeTurns.has(item.turnId) || (item.type === "assistant_message" && item.streaming))
+      continue;
+    result.add(item.id);
+  }
+  return result;
+}

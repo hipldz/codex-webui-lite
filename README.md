@@ -6,70 +6,11 @@ Codex 的登录状态、配置和 session 仍由 Codex 自己管理；Web UI 不
 
 ![Codex Web UI 操作演示](https://hipldz.com/api/v1/website/image/ai-sharing/codex-webui-lite-demo.gif@original)
 
-## 功能
+先看 [快速开始](#快速开始)；查配置看 [环境变量](#环境变量)，其中包含 `CODEX_WEB_MAX_TURNS` 的并发与排队说明。
 
-- 从 app-server 分页加载本机 Codex CLI、VS Code、exec、app-server 和 sub-agent sessions
-- 创建、恢复、Branch、归档、取消归档、批量操作和删除 session
-- 当前 session 写入 `?session=<id>`，刷新页面后自动恢复
-- 用户授权后，任务成功完成、需要回答或审批时显示系统通知，点击可返回对应会话
-- 新对话默认使用 `CODEX_WEB_DEFAULT_WORKSPACE`；未配置或目录无效时手动选择 workspace；已有 session 自动恢复自己的 workspace。输入框上方常驻 Folder 入口，显示当前目录并可打开选择器，完整路径可悬停查看；已有会话切换目录会开始新对话
-- 从真实 `model/list` 读取模型与 reasoning effort，输入框内提供独立的模型和 effort 选择器；切换模型时保留仍受支持的 effort，否则回退到新模型默认值
-- 流式显示回答、thinking、命令、文件修改、工具调用、网页搜索、图片、hook、子 agent、review、计划更新与警告
-- AI 回复在浏览器端渲染 Markdown/GFM，支持表格、任务列表、删除线与代码块
-- 每轮活动汇总为可展开的时间线；保留文件/命令摘要和历史 context compact 记录
-- 执行中原生提问：选项、自定义回答、多问题导航、快捷提交、待回答提示、草稿恢复与提交回执；同时支持阻塞问题和非阻塞问题
-- Code / Plan 模式切换；原生计划以独立卡片展示，完成后可确认执行或继续修改
-- Composer 可设置整个 Web UI 的权限：按需确认、Full access（无 sandbox / 无审批）、只读或跟随 Codex 配置；服务端持久保存，所有会话的后续 turn 统一使用
-- 可在输入框粘贴或选择任意类型文件作为附件；图片支持点击预览，所有附件均会在会话中保留并可下载
-- 输入框附件单条消息最多 4 个，单个文件和所有附件合计均限制为 10 MB；附件直接保存在 `${CODEX_HOME}/web-ui/<thread.id>/`（默认 `~/.codex/web-ui/<thread.id>/`），每轮会把具体文件路径告诉 Codex；文本、图片和音频也会直接传入模型，其他二进制文件可由 Codex 按路径读取
-- 文件树、文本文件创建/删除、预览、编辑与下载；Project files 与 Session files 分开浏览和上传
-- 按文件查看 Changes/Diff
-- 显示 context window、实时内存占用，以及独立的 5-hour / Weekly account usage 窗口
-- 支持部署在 `/codex/` 之类的反向代理子路径；不要求 WebSocket 反代
-
-## 浏览器通知
-
-点击页面提示条或 **Settings → Task notifications → Enable notifications**，由用户操作触发浏览器权限请求。已允许或拒绝时不会重复弹出权限请求；拒绝后需在浏览器的站点设置中手动允许。Settings 会显示当前权限状态，授权后可点击 **Send test notification** 检查通知。无痕窗口中也需要检查该窗口的站点权限。
-
-任务成功完成、收到待回答问题或待审批请求时发送系统通知，包括当前打开和其他会话的新事件；失败、手动停止、恢复历史或刷新列表不会触发成功通知。同一页面收到重复事件不会重复通知。点击通知会聚焦页面，必要时打开对应的 `?session=<id>` 会话，问题和审批通知会定位到相应请求，并保留部署子路径。
-
-刷新页面或断线重连时，服务端快照中仍待回答、待审批的请求也会触发提醒；同一页面内已提醒过的请求不会因重连或切换会话再次通知。之后才授权通知的，会补发当前仍待处理的请求。
-
-通知需要 **HTTPS 或 localhost**；通过普通 HTTP 的远程 IP/域名访问时不可用。网页需保持打开，切换标签页或最小化浏览器仍可接收，但浏览器节流和系统休眠可能带来延迟。关闭网页后的通知需要额外实现 Web Push，本版本不包含该能力。系统是否弹出提示、播放声音仍由浏览器通知设置及 Windows 勿扰模式决定。演示页面不会自动申请权限或发送任务通知。
-
-## 提问与计划交互
-
-输入框工具栏的 **Code / Plan** 切换决定下一轮是直接执行还是先规划。Plan 使用 Codex 内置的规划模式；收到原生计划后显示 Markdown 计划卡片。只有规划轮成功完成，才出现 **Implement this plan** 和 **Revise plan**。执行会切换到 Code 并开始新一轮；修改会将输入框切回 Plan，供用户补充要求。
-
-Codex 的 `item/tool/requestUserInput` 会显示问题卡片。可以选择选项，或在协议允许时填写自己的答案；多问题支持逐项导航，所有问题回答后统一提交。支持 `Ctrl / ⌘ + Enter`。阻塞问题提交后当前任务继续；非阻塞问题可暂不回答或主动 dismiss。异步消息中的结构化问题也会显示卡片：任务运行时通过 `turn/steer` 回答，任务结束后通过新一轮发送答案。
-
-较长的问题和选项说明先显示摘要，可展开全文；待回答的选项和输入入口保留在对话中，已回答的问题折叠为可展开的回执。长用户消息也可展开或收起，并保留换行。输入框上方可跳转到待回答问题；需要审批时会打开独立的审批面板，关闭面板后可以从输入框上方重新打开。会话列表标记等待回答或审批的会话，工作活动默认折叠，摘要会标记失败的命令。历史会话中标记为过程更新的消息也会折叠；旧记录没有阶段标记时，只在同一轮的工具调用和后续回复能表明它是过程更新时折叠，无法确定的消息仍保持可见。
-
-普通答案草稿保存在当前浏览器标签页，敏感答案使用密码输入框且不保存草稿。服务进程存活时，刷新或重新打开会话可恢复待回答问题和近期回执；请求被 Codex 关闭、任务中断或 runtime 重启后，会显示为已关闭，避免向失效请求提交。回执使用有容量限制的内存缓存，不作为永久历史存储；从原生历史恢复但无法确定是否仍有效的问题仅供查看。
-
-演示页面可使用 `?demo=questions` 查看多问题交互，或使用 `?demo=plan` 查看计划确认。演示无需运行模型，回答与执行仅在浏览器中模拟。
-
-这些原生接口属于 Codex experimental API。本次按本机 `codex-cli 0.162.1` 导出的协议实现；较旧的 app-server 若不支持 `collaborationMode`，发送会明确报错，不会静默把规划请求改成执行请求。
-
-## 目录说明
-
-| 路径           | 用途                               | 是否手工修改   |
-| -------------- | ---------------------------------- | -------------- |
-| `src/`         | React/TSX 前端源码                 | 是             |
-| `server/`      | Node/TypeScript 服务端源码         | 是             |
-| `public/`      | 原样复制的静态资源                 | 是             |
-| `scripts/`     | Playwright 验证脚本                | 是             |
-| `dist/`        | Vite 生成的前端生产文件            | 否，可删除重建 |
-| `dist-server/` | TypeScript 生成的服务端 JavaScript | 否，可删除重建 |
-
-`server/` 与 `dist-server/` 不是两套源码：
-
-```text
-server/*.ts  -- npm run build -->  dist-server/*.js
-src/*        -- npm run build -->  dist/*
-```
-
-仓库只维护 `src/` 和 `server/`。`dist/`、`dist-server/` 已加入 `.gitignore`，不要直接编辑或提交。当前生成目录被删除是正常的，执行 `npm run build` 会重新创建。
+- 部署：[后台运行与 systemd](#后台运行) · [访问认证](#访问认证) · [Nginx](#nginx)
+- 使用：[功能](#功能) · [Workspace 与会话文件](#workspace-与会话文件) · [全局权限](#web-ui-全局权限) · [Files](#files-文件管理与上传) · [Session 与分支](#session-url)
+- 维护：[内存说明](#内存说明) · [开发运行](#开发运行) · [验证](#验证) · [常见问题](#常见问题)
 
 ## 环境要求
 
@@ -84,150 +25,18 @@ node --version
 codex --version
 ```
 
-## 开发运行
+## 快速开始
 
-开发模式不需要 `dist/` 或 `dist-server/`：
-
-```bash
-cd /home/pldz/local/codex-scripts/web-ui
-npm install
-npm run dev
-```
-
-默认打开：
-
-```text
-http://127.0.0.1:8765/
-```
-
-前端修改由 Vite 即时加载，后端入口通过 `tsx server/index.ts --dev` 运行。
-
-## 代码格式化
-
-项目使用 Prettier，配置在 `.prettierrc.json`。格式化源码与文档：
+在项目根目录安装依赖、构建并启动：
 
 ```bash
-npm run format
-```
-
-仅检查格式，不修改文件：
-
-```bash
-npm run format:check
-```
-
-生成目录、依赖目录、运行文件和 npm 管理的 `package-lock.json` 通过 `.prettierignore` 排除。
-
-## Web UI 全局权限
-
-在输入框的权限菜单选择一次即可应用到整个 Web UI，包括新建、恢复和分支会话。设置保存在 `${CODEX_HOME}/web-ui/settings.json`（默认 `~/.codex/web-ui/settings.json`），刷新页面、切换 workspace、换浏览器或重启 Web 服务后仍保持。其他已打开页面也会同步更新。首次未设置时使用 **Ask when needed**。
-
-选择 **Full access** 后，后端会直接应用无 sandbox、无审批的预设，不需要修改 `config.toml`。后端始终以已保存的 Web UI 设置为准，不使用旧页面随消息携带的权限值。修改从尚未启动的轮次开始生效，已在执行的轮次保持原策略；排队中的任务启动时采用当时保存的设置。保存失败会显示错误并保留原设置。
-
-例如会话 1 正以 Full access 执行，同时在会话 2 改为 Ask when needed：会话 1 当前这一轮仍按 Full access 执行；会话 1 下一轮以及尚未启动的排队任务会采用 Ask。当前不支持为两个会话分别固定不同的 Web UI 权限预设。
-
-只有主动选择 **Use config.toml** 时，权限才跟随当前 workspace 的 Codex 有效配置；此选择本身也会保存为 Web UI 全局设置。Web UI 的权限设置独立保存，不会修改 CLI 或 VS Code 使用的 `config.toml`。
-
-Codex 的会话权限是多个设置组合出来的，不是单一的“权限等级”：
-
-- `sandbox_mode` 限定命令可访问的文件和网络范围：`read-only`、`workspace-write` 或 `danger-full-access`。
-- `approval_policy` 决定哪些操作会暂停并进入审批：`on-request`、`never` 或按类别配置的 `granular`。
-- `approvals_reviewer` 决定由谁审核符合条件的审批请求：`user`（默认）或 `auto_review`。`auto_review` 只改变审核者，不扩大 sandbox，也不会审核 sandbox 内已经允许的操作。
-
-常用组合如下：
-
-| 行为              | `sandbox_mode`       | `approval_policy` | `approvals_reviewer`    | 效果                                                                                  |
-| ----------------- | -------------------- | ----------------- | ----------------------- | ------------------------------------------------------------------------------------- |
-| Ask for approval  | `workspace-write`    | `on-request`      | `user`                  | 在 workspace 内读写和运行常规命令；需要越过 sandbox 边界时向用户请求审批。            |
-| Approve for me    | `workspace-write`    | `on-request`      | `auto_review`           | sandbox 边界与 Ask 相同；符合条件的审批请求交给自动 reviewer 审核。                   |
-| Full access       | `danger-full-access` | `never`           | 通常不需要设置          | 不受 sandbox 限制，也不暂停等待审批。只用于可信环境。                                 |
-| 受限自动执行      | `workspace-write`    | `never`           | 不适用                  | 在 workspace sandbox 范围内自动执行；需要越过边界时不会弹出审批，操作会被拒绝或失败。 |
-| Read-only         | `read-only`          | `on-request`      | `user`                  | 默认只读；需要提升权限的操作可以请求用户审批。                                        |
-| Granular approval | 任意 sandbox         | `granular` 对象   | `user` 或 `auto_review` | 分别决定不同类别的请求可否进入审批流程。                                              |
-
-`never` 控制是否等待审批，不会解除 sandbox 限制；因此 `workspace-write + never` 不是 Full access。相反，`danger-full-access + on-request` 虽然可以组合，但因为没有 workspace sandbox 边界，不能把它当成“所有危险操作都会先问我”。官方将 Full access 定义为 `danger-full-access + never`。[Sandbox 与审批说明](https://developers.openai.com/codex/sandboxing)
-
-如果只需要让 `workspace-write` 多写几个指定目录，可以用 `[sandbox_workspace_write].writable_roots` 扩展范围，并继续保留 sandbox；`network_access` 和临时目录选项也只调整该 sandbox 的边界，不会将它变成 Full access：
-
-```toml
-sandbox_mode = "workspace-write"
-
-[sandbox_workspace_write]
-writable_roots = ["/srv/shared"]
-network_access = false
-```
-
-### Ask for approval
-
-这是常见的本地开发模式：
-
-```toml
-sandbox_mode = "workspace-write"
-approval_policy = "on-request"
-approvals_reviewer = "user"
-```
-
-### Approve for me
-
-它与 Ask 使用相同 sandbox，只把符合条件的审批请求交给自动 reviewer；reviewer 可以审核并批准或拒绝请求，但不会扩大 sandbox 权限：
-
-```toml
-sandbox_mode = "workspace-write"
-approval_policy = "on-request"
-approvals_reviewer = "auto_review"
-```
-
-### 受限自动执行
-
-适合不需要交互审批、但仍要限制在 workspace 范围内的任务：
-
-```toml
-sandbox_mode = "workspace-write"
-approval_policy = "never"
-```
-
-### Read-only
-
-```toml
-sandbox_mode = "read-only"
-approval_policy = "on-request"
-approvals_reviewer = "user"
-```
-
-### Granular approval
-
-`granular` 可以逐类允许或拒绝审批提示。某字段为 `true` 时，该类请求可以进入审批流程；为 `false` 时会自动拒绝，而不是弹窗。字段包括 sandbox 提权、命令规则、MCP elicitation、权限申请和 Skill 脚本审批：
-
-```toml
-sandbox_mode = "workspace-write"
-approvals_reviewer = "user"
-approval_policy = { granular = { sandbox_approval = true, rules = true, mcp_elicitations = false, request_permissions = true, skill_approval = true } }
-```
-
-`approval_policy = "untrusted"` 已不再是可直接选择的策略，`on-failure` 已弃用；旧配置应改用受支持的策略。项目的 `trust_level = "untrusted"` 是另一项设置，仍可用于项目级信任管理。[Codex 配置参考](https://developers.openai.com/codex/config-reference/)
-
-Web UI 的权限菜单提供 **Ask when needed**、**Full access**、**Read-only** 和 **Use config.toml**，没有单独的 Approve for me 或 granular 按钮。需要命名权限方案、自动 reviewer、自定义 sandbox 规则、granular 策略或其他非标准组合时，选择 **Use config.toml**，已有会话也会在发送下一条消息前应用当前 workspace 的配置。选择 Ask、Full 或 Read-only 时，则统一使用 Web UI 对应预设，并将 reviewer 设为 `user`，项目权限默认配置不会覆盖这个选择。
-
-使用 **Use config.toml** 时，不要把 `default_permissions` 与旧式 `sandbox_mode` 或 `[sandbox_workspace_write]` 混用；命名权限方案保持其原始定义。[Codex 配置参考](https://developers.openai.com/codex/config-reference/)
-
-`Full access` 会允许 Codex 在当前运行账户的权限范围内执行命令。只应在本机、可信 workspace 和已理解任务影响时使用。
-
-## 活动时间线与用量
-
-- app-server 的结构化 item 会按 turn 显示；命令、读写文件、MCP/动态工具、网页搜索、图像、子 agent 和 review 都可展开查看详情。
-- 计划、hook、模型 reroute、安全等待、警告和 context compact 显示为独立状态行；compact 记录会随 session 历史保留。
-- 设置抽屉中的 account usage 会将 app-server 返回的 primary / secondary 窗口明确标为 **5-hour limit** 与 **Weekly limit**。认证方式未提供该接口时，面板显示 `Unavailable`。
-
-## 生产运行
-
-生产模式必须先构建：
-
-```bash
-cd /home/pldz/local/codex-scripts/web-ui
+cd /path/to/codex-webui-lite
 npm install
 npm run build
 npm start
 ```
+
+默认访问 `http://127.0.0.1:8765/`。新对话需先选择 workspace，或在启动前设置 `CODEX_WEB_DEFAULT_WORKSPACE`。并发、端口和部署路径等配置见 [环境变量](#环境变量)。
 
 `npm run build` 会同时生成：
 
@@ -248,10 +57,10 @@ node --max-old-space-size=256 dist-server/index.js
 
 准备一个专用 Linux 用户，并确保该用户安装了符合要求的 Node.js、已登录 `codex` CLI，且有权访问项目目录和 workspace。Codex 登录信息必须属于运行 Web 服务的同一个用户。以下命令假设当前终端已切换到 `codex` 用户。
 
-以下以项目位于 `/srv/codex-scripts/web-ui`、运行用户为 `codex` 为例：
+以下以项目位于 `/srv/codex-webui-lite`、运行用户为 `codex` 为例：
 
 ```bash
-cd /srv/codex-scripts/web-ui
+cd /srv/codex-webui-lite
 npm ci
 npm run build
 mkdir -p /home/codex/workspace
@@ -259,12 +68,68 @@ mkdir -p /home/codex/workspace
 export CODEX_WEB_HOST=127.0.0.1
 export CODEX_WEB_PORT=8765
 export CODEX_WEB_BASE_PATH=/codex
+export CODEX_WEB_MAX_TURNS=1
 export CODEX_WEB_DEFAULT_WORKSPACE=/home/codex/workspace
 export CODEX_WEB_AUTH='codex:替换为强密码'
 npm start
 ```
 
 先以前台方式确认服务正常。Node 默认只监听本机回环地址，外部访问应经过 Nginx HTTPS 反向代理；Basic Auth 不加密连接，不能用明文 HTTP 暴露到公网。Nginx 配置见本 README 的 [Nginx](#nginx) 一节。反向代理路径需与 `CODEX_WEB_BASE_PATH` 一致。
+
+## 环境变量
+
+以下变量均可选，在启动 Web 服务时读取。配置来源见 [server/config.ts](server/config.ts) 与 [server/controller.ts](server/controller.ts)。
+
+| 变量                          | 默认值      | 说明                                                                                                      |
+| ----------------------------- | ----------- | --------------------------------------------------------------------------------------------------------- |
+| `CODEX_WEB_HOST`              | `127.0.0.1` | Node 监听地址                                                                                             |
+| `CODEX_WEB_PORT`              | `8765`      | Node 监听端口                                                                                             |
+| `CODEX_WEB_BASE_PATH`         | `/`         | 页面及 HTTP API 的统一子路径，例如 `/codex`                                                               |
+| `CODEX_WEB_DEFAULT_WORKSPACE` | 未设置      | 新对话默认选中的目录；目录不存在或不可用时需手动选择                                                      |
+| `CODEX_WEB_MAX_TURNS`         | `1`         | 整个 Web 服务同时执行的 turn 数，支持 `1`–`4`；超出并发的任务排队，详见下方说明                           |
+| `CODEX_WEB_AUTH`              | 未启用      | Basic Auth，格式为 `username:password`                                                                    |
+| `CODEX_HOME`                  | `~/.codex`  | Codex 配置与 sessions 所在目录；Web UI 设置与会话文件保存在其中的 `web-ui/`，会话文件规则写入 `AGENTS.md` |
+
+### 并发与排队：CODEX_WEB_MAX_TURNS
+
+`CODEX_WEB_MAX_TURNS` 控制不同会话之间的并发数。同一会话同时只能有一个待处理或执行中的 turn。等待回答或审批的 turn 仍占用执行名额；切换会话或从历史回复创建分支不会停止原任务，分支中发送的新任务也共用这些名额。
+
+例如设为 `2` 时，会话 A、B 可以同时执行，会话 C 提交后等待名额空出。此项不限制一个任务内部的模型调用次数、工具调用次数或子 agent 数量。
+
+请填写 `1`–`4` 的整数。当前实现先向下取整，再限制到此范围；未设置、空值或无法解析为数字时使用 `1`。Web UI 队列最多接收 **8 + 并发数** 个尚未结束的任务，包含保存、等待、启动和执行中的任务，达到上限后拒绝新提交。没有外部运行会话占用名额时，默认可执行 1 个、再等待 8 个。已发现的外部运行会话也计入调度占用，但不受此 Web UI 的并发设置控制。
+
+设置并发为 2 并以前台方式启动（需先完成构建，已有前台进程需先退出）：
+
+```bash
+export CODEX_WEB_MAX_TURNS=2
+npm start
+```
+
+PowerShell：
+
+```powershell
+$env:CODEX_WEB_MAX_TURNS = "2"
+npm start
+```
+
+2 核 2GB 机器建议保留默认值 `1`。提高并发会同时增加 Codex 和工具进程的资源占用。
+
+使用后台脚本的已有实例，可在同一终端设置 `export CODEX_WEB_MAX_TURNS=2` 后执行 `./scripts/codex-web.sh restart`；同时保留原有的端口、base path、认证等环境变量。使用 systemd 时，在 `/etc/codex-web.env` 中添加或修改 `CODEX_WEB_MAX_TURNS=2`，再执行 `sudo systemctl restart codex-web`。
+
+### 配置如何生效
+
+- `npm start`、`npm run dev` 和后台脚本都从启动进程的环境读取配置，项目不会自动加载 `.env`。仅在项目中新建 `.env` 文件不会生效。
+- shell 中先 `export` 再启动；PowerShell 中先设置 `$env:变量名`。后台脚本重启时也需提供完整的所需变量，脚本不会保存上次的配置。
+- systemd 部署时，把变量写入服务使用的 `EnvironmentFile`，再执行 `sudo systemctl restart codex-web`。具体示例见 [后台运行](#后台运行)。
+- 修改上述变量后需要重启 **Web 服务进程**；页面中的 Codex Restart 只重启 app-server，不会重新读取 Web 服务环境变量。仅修改环境变量无需重新构建；修改源码后，生产模式需先构建再重启。
+- `CODEX_WEB_PORT` 与 `CODEX_WEB_BASE_PATH` 也支持 `--port`、`--base-path` 参数，例如 `npm start -- --port 9000 --base-path /codex`；对应的非空环境变量优先于命令行参数。
+
+另外两项只供辅助脚本使用，不属于 Web 服务配置：
+
+| 变量                   | 默认值                         | 适用范围                                                             |
+| ---------------------- | ------------------------------ | -------------------------------------------------------------------- |
+| `NODE_BIN`             | `PATH` 中的 `node`             | 仅 Linux/macOS 的 `scripts/codex-web.sh`，可指定 Node 可执行文件路径 |
+| `CODEX_WEB_VERIFY_URL` | `http://127.0.0.1:8876/codex/` | 仅浏览器验证脚本，指定验证目标地址，保留末尾 `/`                     |
 
 ## 后台运行
 
@@ -307,6 +172,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\codex-web.ps1 start
 ```bash
 export CODEX_WEB_BASE_PATH=/codex
 export CODEX_WEB_PORT=8765
+export CODEX_WEB_MAX_TURNS=1
 mkdir -p "$HOME/workspace"
 export CODEX_WEB_DEFAULT_WORKSPACE="$HOME/workspace"
 ./scripts/codex-web.sh start
@@ -315,6 +181,7 @@ export CODEX_WEB_DEFAULT_WORKSPACE="$HOME/workspace"
 ```powershell
 $env:CODEX_WEB_BASE_PATH = "/codex"
 $env:CODEX_WEB_PORT = "8765"
+$env:CODEX_WEB_MAX_TURNS = "1"
 New-Item -ItemType Directory -Force -Path "$HOME/workspace" | Out-Null
 $env:CODEX_WEB_DEFAULT_WORKSPACE = "$HOME/workspace"
 .\scripts\codex-web.ps1 start
@@ -333,6 +200,7 @@ Linux systemd 示例（把项目路径、Node 路径和账户名换成服务器�
 ```ini
 CODEX_WEB_HOST=127.0.0.1
 CODEX_WEB_PORT=8765
+CODEX_WEB_MAX_TURNS=1
 CODEX_WEB_BASE_PATH=/codex
 CODEX_WEB_DEFAULT_WORKSPACE=/home/codex/workspace
 CODEX_WEB_AUTH=codex:替换为强密码
@@ -356,10 +224,10 @@ After=network.target
 Type=simple
 User=codex
 Group=codex
-WorkingDirectory=/srv/codex-scripts/web-ui
+WorkingDirectory=/srv/codex-webui-lite
 Environment=HOME=/home/codex
 EnvironmentFile=/etc/codex-web.env
-ExecStart=/usr/bin/node --max-old-space-size=256 /srv/codex-scripts/web-ui/dist-server/index.js
+ExecStart=/usr/bin/node --max-old-space-size=256 /srv/codex-webui-lite/dist-server/index.js
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
@@ -386,72 +254,12 @@ sudo journalctl -u codex-web -f
 修改代码后重新构建并重启：
 
 ```bash
-cd /srv/codex-scripts/web-ui
+cd /srv/codex-webui-lite
 npm run build
 sudo systemctl restart codex-web
 ```
 
 systemd 和 `scripts/codex-web.sh` 不要同时管理同一个实例。
-
-## Workspace 与环境变量
-
-所有变量都是可选的：
-
-| 变量                          | 默认值      | 说明                                                                                                    |
-| ----------------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
-| `CODEX_WEB_HOST`              | `127.0.0.1` | Node 监听地址                                                                                           |
-| `CODEX_WEB_PORT`              | `8765`      | Node 监听端口                                                                                           |
-| `CODEX_WEB_BASE_PATH`         | `/`         | 页面及 HTTP API 的统一子路径                                                                            |
-| `CODEX_WEB_DEFAULT_WORKSPACE` | 未设置      | 启动及每次新建对话时默认选中的 workspace 目录；目录不存在或不可用时忽略，仍需手动选择                   |
-| `CODEX_WEB_AUTH`              | 未启用      | 可选 Basic Auth，格式为 `username:password`                                                             |
-| `CODEX_HOME`                  | `~/.codex`  | Codex 配置与 sessions 所在目录；Web UI 规则写入其中的 `AGENTS.md`，会话文件保存在 `web-ui/<thread.id>/` |
-
-页面会先加载最近 50 个本地 session。workspace 的选择规则如下：
-
-- 打开已有 session 或刷新带 `?session=<id>` 的地址时，恢复该 session 自己的 workspace。
-- 每次点击 **New thread** 时，恢复 `CODEX_WEB_DEFAULT_WORKSPACE` 指定的目录，并重新读取该目录的模型与 reasoning effort 默认配置；权限保持 Web UI 的全局设置。
-- 未设置默认目录，或启动时发现目录不存在、不是目录或无法访问时，新建对话需手动选择 workspace；不会将 Web UI 项目目录或上一个 session 的目录自动当成已选 workspace。
-- 新对话首次发送前可以手动选择其他目录，本次对话使用该目录；再次点击 **New thread** 时仍恢复配置的默认目录。仅浏览或取消目录选择器不会改变当前 workspace。
-- Workspace 选择器从当前工作目录开始；无已选目录时从服务账号的主目录开始。可以向上浏览到文件系统根目录，输入绝对路径、`~` 路径或相对文件系统根目录的路径，也可显示隐藏目录及进入符号链接目录。Windows 下可以通过输入绝对路径切换盘符。
-- 默认工作目录只决定新会话的起点，不限制已有会话的位置。已有会话使用自己的实际工作目录，项目文件链接按该目录解析，会话附件和独立交付文件使用各自的 Session files 目录；不会受默认目录或用户主目录的位置影响。目录不存在或服务账号无权访问时，会话中才显示相应错误。
-- 在已有会话中选择相同目录只关闭选择器；选择其他目录会开始新对话，不改变已有会话的工作目录。输入框草稿和待上传附件在当前页面内按会话或新对话工作区分别保留，刷新页面后不保留。
-
-`CODEX_WEB_DEFAULT_WORKSPACE` 应指向已存在且服务运行用户可访问的目录，推荐使用绝对路径。默认目录在 Web 服务启动时读取和校验；修改环境变量或修复无效目录后需重启 Web 服务，再重新载入页面。仅修改环境变量不需要重新构建；更新 `src/` 或 `server/` 源码时，生产模式必须先重新构建再重启。
-
-各类目录的用途分别是：
-
-| 目录                      | 用途                                            | 配置方式                                                                            |
-| ------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Workspace / Project files | 对话的工作目录（`cwd`），用于项目源码和项目资源 | 新对话默认取 `CODEX_WEB_DEFAULT_WORKSPACE`，也可手动选择；已有 session 使用自身目录 |
-| Codex home                | Codex 配置、认证与 session 记录                 | `CODEX_HOME`，未设置时为 `~/.codex`                                                 |
-| Session files             | 当前会话的附件与默认独立交付文件                | 固定为 `${CODEX_HOME}/web-ui/<thread.id>/`                                          |
-
-例如 `CODEX_WEB_DEFAULT_WORKSPACE=/home/codex/workspace`、`CODEX_HOME=/home/codex/.codex` 时，新对话的 `cwd` 是 `/home/codex/workspace`，附件与默认独立交付文件保存在 `/home/codex/.codex/web-ui/<thread.id>/`。设置默认 workspace 不会改变 Codex home 或 Session files 的位置。
-
-Composer 上传文件使用 app-server 返回的 `thread.id`（不是 `sessionId`），保存在 `${CODEX_HOME}/web-ui/<thread.id>/example.pdf`。新附件优先保留原文件名，同一会话中遇到同名文件或目录时依次使用 `example (2).pdf`、`example (3).pdf`，以独占创建避免覆盖已有文件。文件名中的路径和不安全字符会被清理，超长名称会按 UTF-8 字节限制缩短，内部元数据保留前缀会添加下划线。附件与消息的关联仍由元数据中的 ID 和实际路径维护。已有附件保持原名和原位置，带消息 ID 前缀的旧附件继续按记录的路径读取；老会话后续上传的附件也使用新命名规则。未设置 `CODEX_HOME` 时默认使用 `~/.codex`；相对路径按 Web UI 启动目录解析，并将同一绝对路径传给 Codex。项目的 `cwd` 保持不变，不再在项目中创建 `.files` 或修改 `.gitignore`。
-
-Web UI 的会话文件规则内置于 [server/web-instructions.ts](server/web-instructions.ts)，无需独立模板文件。启动时检查 `${CODEX_HOME}/AGENTS.md`，将内置规则安装到 `codex-web:thread-files` 标记块中。规则一致时不重复写入；内置规则更新时只更新这个块，保留其他内容。规则只适用于带有 Web UI 文件上下文的轮次。每轮仅提供当前会话目录的绝对路径和本轮附件路径，内部上下文不显示在消息气泡里。安装发生在启动 Codex app-server 之前；此前已运行的其他 Codex 会话需要重新加载全局指令。
-
-默认独立交付文件与附件直接保存在会话目录，用户指定其他位置时尊重用户要求；项目源码和构建产物仍保存在项目路径。后端确保会话目录存在，但生成文件仍由 Agent 保存。Ask when needed 模式只将当前会话目录额外加入可写范围，不开放整个 `CODEX_HOME`；只读模式不允许 Agent 写文件。Use config.toml 的传统 workspace-write 配置也增加当前会话目录；命名权限配置保持原定义，其访问范围需要用户在该配置中允许。
-
-恢复旧会话时，workspace 下的 `.files/<thread.id>/`、旧版 `uploads/` 和 `CODEX_HOME/attachments/codex-web/` 附件仍从原位置读取，不自动迁移。分叉会话的新文件使用新 thread 目录，历史附件继续引用父会话；历史回复中的父会话文件链接可预览图片或直接下载原文件。删除会话不会删除新会话目录或项目中的旧文件，避免误删交付文件和分叉仍在使用的文件；确认不再需要后，可按 thread 目录手动清理。
-
-子路径部署示例：
-
-```bash
-export CODEX_WEB_HOST=127.0.0.1
-export CODEX_WEB_PORT=8765
-export CODEX_WEB_BASE_PATH=/codex
-npm start
-```
-
-访问：
-
-```text
-http://127.0.0.1:8765/codex/
-```
-
-注意：只写 `CODEX_WEB_BASE_PATH=/codex` 而不使用 `export`，后续单独执行的 `npm start` 不会继承这个变量。
 
 ## 访问认证
 
@@ -555,6 +363,207 @@ export CODEX_WEB_BASE_PATH=/codex
 
 点击后直接在 Files 抽屉中预览；复制到新标签页打开也不会跳出 `/codex/`。当前 workspace、当前会话文件目录及分叉继承的会话文件链接可按对应范围打开；其他位置的普通文件链接会显示为不可用。
 
+## 功能
+
+- 从 app-server 分页加载本机 Codex CLI、VS Code、exec、app-server 和 sub-agent sessions
+- 创建、恢复、Branch、归档、取消归档、批量操作和删除 session
+- 当前 session 写入 `?session=<id>`，刷新页面后自动恢复
+- 用户授权后，任务成功完成、需要回答或审批时显示系统通知，点击可返回对应会话
+- 新对话默认使用 `CODEX_WEB_DEFAULT_WORKSPACE`；未配置或目录无效时手动选择 workspace；已有 session 自动恢复自己的 workspace。输入框上方常驻 Folder 入口，显示当前目录并可打开选择器，完整路径可悬停查看；已有会话切换目录会开始新对话
+- 从真实 `model/list` 读取模型与 reasoning effort，输入框内提供独立的模型和 effort 选择器；切换模型时保留仍受支持的 effort，否则回退到新模型默认值
+- 流式显示回答、thinking、命令、文件修改、工具调用、网页搜索、图片、hook、子 agent、review、计划更新与警告
+- AI 回复在浏览器端渲染 Markdown/GFM，支持表格、任务列表、删除线与代码块
+- 每轮活动汇总为可展开的时间线；保留文件/命令摘要和历史 context compact 记录
+- 执行中原生提问：选项、自定义回答、多问题导航、快捷提交、待回答提示、草稿恢复与提交回执；同时支持阻塞问题和非阻塞问题
+- Code / Plan 模式切换；原生计划以独立卡片展示，完成后可确认执行或继续修改
+- Composer 可设置整个 Web UI 的权限：按需确认、Full access（无 sandbox / 无审批）、只读或跟随 Codex 配置；服务端持久保存，所有会话的后续 turn 统一使用
+- 可在输入框粘贴或选择任意类型文件作为附件；图片支持点击预览，所有附件均会在会话中保留并可下载
+- 输入框附件单条消息最多 4 个，单个文件和所有附件合计均限制为 10 MB；附件直接保存在 `${CODEX_HOME}/web-ui/<thread.id>/`（默认 `~/.codex/web-ui/<thread.id>/`），每轮会把具体文件路径告诉 Codex；文本、图片和音频也会直接传入模型，其他二进制文件可由 Codex 按路径读取
+- 文件树、文本文件创建/删除、预览、编辑与下载；Project files 与 Session files 分开浏览和上传
+- 按文件查看 Changes/Diff
+- 显示 context window、实时内存占用，以及独立的 5-hour / Weekly account usage 窗口
+- 支持部署在 `/codex/` 之类的反向代理子路径；不要求 WebSocket 反代
+- 支持亮色、暗色和跟随系统主题；在 Settings → Appearance 中切换，选择保存在当前浏览器
+
+## 界面主题
+
+打开 **Settings → Appearance**，选择 **Light**（亮色）、**Dark**（暗色）或 **System**（跟随系统）。默认使用 System，设备的明暗偏好变化时会自动更新；手动选择 Light 或 Dark 后保持该模式。
+
+主题选择保存在当前浏览器的 localStorage，刷新后保留，同一站点的其他标签页也会同步。不同浏览器或设备分别保存；浏览器禁止存储时，仍可在当前页面切换，刷新后恢复跟随系统。主题切换立即生效，无需重启 Web 服务或 Codex。
+
+## 浏览器通知
+
+点击页面提示条或 **Settings → Task notifications → Enable notifications**，由用户操作触发浏览器权限请求。已允许或拒绝时不会重复弹出权限请求；拒绝后需在浏览器的站点设置中手动允许。Settings 会显示当前权限状态，授权后可点击 **Send test notification** 检查通知。无痕窗口中也需要检查该窗口的站点权限。
+
+任务成功完成、收到待回答问题或待审批请求时发送系统通知，包括当前打开和其他会话的新事件；失败、手动停止、恢复历史或刷新列表不会触发成功通知。同一页面收到重复事件不会重复通知。点击通知会聚焦页面，必要时打开对应的 `?session=<id>` 会话，问题和审批通知会定位到相应请求，并保留部署子路径。
+
+刷新页面或断线重连时，服务端快照中仍待回答、待审批的请求也会触发提醒；同一页面内已提醒过的请求不会因重连或切换会话再次通知。之后才授权通知的，会补发当前仍待处理的请求。
+
+通知需要 **HTTPS 或 localhost**；通过普通 HTTP 的远程 IP/域名访问时不可用。网页需保持打开，切换标签页或最小化浏览器仍可接收，但浏览器节流和系统休眠可能带来延迟。关闭网页后的通知需要额外实现 Web Push，本版本不包含该能力。系统是否弹出提示、播放声音仍由浏览器通知设置及 Windows 勿扰模式决定。演示页面不会自动申请权限或发送任务通知。
+
+## 提问与计划交互
+
+输入框工具栏的 **Code / Plan** 切换决定下一轮是直接执行还是先规划。Plan 使用 Codex 内置的规划模式；收到原生计划后显示 Markdown 计划卡片。只有规划轮成功完成，才出现 **Implement this plan** 和 **Revise plan**。执行会切换到 Code 并开始新一轮；修改会将输入框切回 Plan，供用户补充要求。
+
+Codex 的 `item/tool/requestUserInput` 会显示问题卡片。可以选择选项，或在协议允许时填写自己的答案；多问题支持逐项导航，所有问题回答后统一提交。支持 `Ctrl / ⌘ + Enter`。阻塞问题提交后当前任务继续；非阻塞问题可暂不回答或主动 dismiss。异步消息中的结构化问题也会显示卡片：任务运行时通过 `turn/steer` 回答，任务结束后通过新一轮发送答案。
+
+较长的问题和选项说明先显示摘要，可展开全文；待回答的选项和输入入口保留在对话中，已回答的问题折叠为可展开的回执。长用户消息也可展开或收起，并保留换行。输入框上方可跳转到待回答问题；需要审批时会打开独立的审批面板，关闭面板后可以从输入框上方重新打开。会话列表标记等待回答或审批的会话，工作活动默认折叠，摘要会标记失败的命令。历史会话中标记为过程更新的消息也会折叠；旧记录没有阶段标记时，只在同一轮的工具调用和后续回复能表明它是过程更新时折叠，无法确定的消息仍保持可见。
+
+普通答案草稿保存在当前浏览器标签页，敏感答案使用密码输入框且不保存草稿。服务进程存活时，刷新或重新打开会话可恢复待回答问题和近期回执；请求被 Codex 关闭、任务中断或 runtime 重启后，会显示为已关闭，避免向失效请求提交。回执使用有容量限制的内存缓存，不作为永久历史存储；从原生历史恢复但无法确定是否仍有效的问题仅供查看。
+
+演示页面可使用 `?demo=questions` 查看多问题交互，或使用 `?demo=plan` 查看计划确认。演示无需运行模型，回答与执行仅在浏览器中模拟。
+
+这些原生接口属于 Codex experimental API。本次按本机 `codex-cli 0.162.1` 导出的协议实现；较旧的 app-server 若不支持 `collaborationMode`，发送会明确报错，不会静默把规划请求改成执行请求。
+
+## Web UI 全局权限
+
+在输入框的权限菜单选择一次即可应用到整个 Web UI，包括新建、恢复和分支会话。设置保存在 `${CODEX_HOME}/web-ui/settings.json`（默认 `~/.codex/web-ui/settings.json`），刷新页面、切换 workspace、换浏览器或重启 Web 服务后仍保持。其他已打开页面也会同步更新。首次未设置时使用 **Ask when needed**。
+
+选择 **Full access** 后，后端会直接应用无 sandbox、无审批的预设，不需要修改 `config.toml`。后端始终以已保存的 Web UI 设置为准，不使用旧页面随消息携带的权限值。修改从尚未启动的轮次开始生效，已在执行的轮次保持原策略；排队中的任务启动时采用当时保存的设置。保存失败会显示错误并保留原设置。
+
+例如会话 1 正以 Full access 执行，同时在会话 2 改为 Ask when needed：会话 1 当前这一轮仍按 Full access 执行；会话 1 下一轮以及尚未启动的排队任务会采用 Ask。当前不支持为两个会话分别固定不同的 Web UI 权限预设。
+
+只有主动选择 **Use config.toml** 时，权限才跟随当前 workspace 的 Codex 有效配置；此选择本身也会保存为 Web UI 全局设置。Web UI 的权限设置独立保存，不会修改 CLI 或 VS Code 使用的 `config.toml`。
+
+Codex 的会话权限是多个设置组合出来的，不是单一的“权限等级”：
+
+- `sandbox_mode` 限定命令可访问的文件和网络范围：`read-only`、`workspace-write` 或 `danger-full-access`。
+- `approval_policy` 决定哪些操作会暂停并进入审批：`on-request`、`never` 或按类别配置的 `granular`。
+- `approvals_reviewer` 决定由谁审核符合条件的审批请求：`user`（默认）或 `auto_review`。`auto_review` 只改变审核者，不扩大 sandbox，也不会审核 sandbox 内已经允许的操作。
+
+常用组合如下：
+
+| 行为              | `sandbox_mode`       | `approval_policy` | `approvals_reviewer`    | 效果                                                                                  |
+| ----------------- | -------------------- | ----------------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| Ask for approval  | `workspace-write`    | `on-request`      | `user`                  | 在 workspace 内读写和运行常规命令；需要越过 sandbox 边界时向用户请求审批。            |
+| Approve for me    | `workspace-write`    | `on-request`      | `auto_review`           | sandbox 边界与 Ask 相同；符合条件的审批请求交给自动 reviewer 审核。                   |
+| Full access       | `danger-full-access` | `never`           | 通常不需要设置          | 不受 sandbox 限制，也不暂停等待审批。只用于可信环境。                                 |
+| 受限自动执行      | `workspace-write`    | `never`           | 不适用                  | 在 workspace sandbox 范围内自动执行；需要越过边界时不会弹出审批，操作会被拒绝或失败。 |
+| Read-only         | `read-only`          | `on-request`      | `user`                  | 默认只读；需要提升权限的操作可以请求用户审批。                                        |
+| Granular approval | 任意 sandbox         | `granular` 对象   | `user` 或 `auto_review` | 分别决定不同类别的请求可否进入审批流程。                                              |
+
+`never` 控制是否等待审批，不会解除 sandbox 限制；因此 `workspace-write + never` 不是 Full access。相反，`danger-full-access + on-request` 虽然可以组合，但因为没有 workspace sandbox 边界，不能把它当成“所有危险操作都会先问我”。官方将 Full access 定义为 `danger-full-access + never`。[Sandbox 与审批说明](https://developers.openai.com/codex/sandboxing)
+
+如果只需要让 `workspace-write` 多写几个指定目录，可以用 `[sandbox_workspace_write].writable_roots` 扩展范围，并继续保留 sandbox；`network_access` 和临时目录选项也只调整该 sandbox 的边界，不会将它变成 Full access：
+
+```toml
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+writable_roots = ["/srv/shared"]
+network_access = false
+```
+
+### Ask for approval
+
+这是常见的本地开发模式：
+
+```toml
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+approvals_reviewer = "user"
+```
+
+### Approve for me
+
+它与 Ask 使用相同 sandbox，只把符合条件的审批请求交给自动 reviewer；reviewer 可以审核并批准或拒绝请求，但不会扩大 sandbox 权限：
+
+```toml
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+```
+
+### 受限自动执行
+
+适合不需要交互审批、但仍要限制在 workspace 范围内的任务：
+
+```toml
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+```
+
+### Read-only
+
+```toml
+sandbox_mode = "read-only"
+approval_policy = "on-request"
+approvals_reviewer = "user"
+```
+
+### Granular approval
+
+`granular` 可以逐类允许或拒绝审批提示。某字段为 `true` 时，该类请求可以进入审批流程；为 `false` 时会自动拒绝，而不是弹窗。字段包括 sandbox 提权、命令规则、MCP elicitation、权限申请和 Skill 脚本审批：
+
+```toml
+sandbox_mode = "workspace-write"
+approvals_reviewer = "user"
+approval_policy = { granular = { sandbox_approval = true, rules = true, mcp_elicitations = false, request_permissions = true, skill_approval = true } }
+```
+
+`approval_policy = "untrusted"` 已不再是可直接选择的策略，`on-failure` 已弃用；旧配置应改用受支持的策略。项目的 `trust_level = "untrusted"` 是另一项设置，仍可用于项目级信任管理。[Codex 配置参考](https://developers.openai.com/codex/config-reference/)
+
+Web UI 的权限菜单提供 **Ask when needed**、**Full access**、**Read-only** 和 **Use config.toml**，没有单独的 Approve for me 或 granular 按钮。需要命名权限方案、自动 reviewer、自定义 sandbox 规则、granular 策略或其他非标准组合时，选择 **Use config.toml**，已有会话也会在发送下一条消息前应用当前 workspace 的配置。选择 Ask、Full 或 Read-only 时，则统一使用 Web UI 对应预设，并将 reviewer 设为 `user`，项目权限默认配置不会覆盖这个选择。
+
+使用 **Use config.toml** 时，不要把 `default_permissions` 与旧式 `sandbox_mode` 或 `[sandbox_workspace_write]` 混用；命名权限方案保持其原始定义。[Codex 配置参考](https://developers.openai.com/codex/config-reference/)
+
+`Full access` 会允许 Codex 在当前运行账户的权限范围内执行命令。只应在本机、可信 workspace 和已理解任务影响时使用。
+
+## 活动时间线与用量
+
+- app-server 的结构化 item 会按 turn 显示；命令、读写文件、MCP/动态工具、网页搜索、图像、子 agent 和 review 都可展开查看详情。
+- 计划、hook、模型 reroute、安全等待、警告和 context compact 显示为独立状态行；compact 记录会随 session 历史保留。
+- 设置抽屉中的 account usage 会将 app-server 返回的 primary / secondary 窗口明确标为 **5-hour limit** 与 **Weekly limit**。认证方式未提供该接口时，面板显示 `Unavailable`。
+
+## Workspace 与会话文件
+
+页面会先加载最近 50 个本地 session。workspace 的选择规则如下：
+
+- 打开已有 session 或刷新带 `?session=<id>` 的地址时，恢复该 session 自己的 workspace。
+- 每次点击 **New thread** 时，恢复 `CODEX_WEB_DEFAULT_WORKSPACE` 指定的目录，并重新读取该目录的模型与 reasoning effort 默认配置；权限保持 Web UI 的全局设置。
+- 未设置默认目录，或启动时发现目录不存在、不是目录或无法访问时，新建对话需手动选择 workspace；不会将 Web UI 项目目录或上一个 session 的目录自动当成已选 workspace。
+- 新对话首次发送前可以手动选择其他目录，本次对话使用该目录；再次点击 **New thread** 时仍恢复配置的默认目录。仅浏览或取消目录选择器不会改变当前 workspace。
+- Workspace 选择器从当前工作目录开始；无已选目录时从服务账号的主目录开始。可以向上浏览到文件系统根目录，输入绝对路径、`~` 路径或相对文件系统根目录的路径，也可显示隐藏目录及进入符号链接目录。Windows 下可以通过输入绝对路径切换盘符。
+- 默认工作目录只决定新会话的起点，不限制已有会话的位置。已有会话使用自己的实际工作目录，项目文件链接按该目录解析，会话附件和独立交付文件使用各自的 Session files 目录；不会受默认目录或用户主目录的位置影响。目录不存在或服务账号无权访问时，会话中才显示相应错误。
+- 在已有会话中选择相同目录只关闭选择器；选择其他目录会开始新对话，不改变已有会话的工作目录。输入框草稿和待上传附件在当前页面内按会话或新对话工作区分别保留，刷新页面后不保留。
+
+`CODEX_WEB_DEFAULT_WORKSPACE` 应指向已存在且服务运行用户可访问的目录，推荐使用绝对路径。默认目录在 Web 服务启动时读取和校验；修改环境变量或修复无效目录后需重启 Web 服务，再重新载入页面。仅修改环境变量不需要重新构建；更新 `src/` 或 `server/` 源码时，生产模式必须先重新构建再重启。
+
+各类目录的用途分别是：
+
+| 目录                      | 用途                                            | 配置方式                                                                            |
+| ------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Workspace / Project files | 对话的工作目录（`cwd`），用于项目源码和项目资源 | 新对话默认取 `CODEX_WEB_DEFAULT_WORKSPACE`，也可手动选择；已有 session 使用自身目录 |
+| Codex home                | Codex 配置、认证与 session 记录                 | `CODEX_HOME`，未设置时为 `~/.codex`                                                 |
+| Session files             | 当前会话的附件与默认独立交付文件                | 固定为 `${CODEX_HOME}/web-ui/<thread.id>/`                                          |
+
+例如 `CODEX_WEB_DEFAULT_WORKSPACE=/home/codex/workspace`、`CODEX_HOME=/home/codex/.codex` 时，新对话的 `cwd` 是 `/home/codex/workspace`，附件与默认独立交付文件保存在 `/home/codex/.codex/web-ui/<thread.id>/`。设置默认 workspace 不会改变 Codex home 或 Session files 的位置。
+
+Composer 上传文件使用 app-server 返回的 `thread.id`（不是 `sessionId`），保存在 `${CODEX_HOME}/web-ui/<thread.id>/example.pdf`。新附件优先保留原文件名，同一会话中遇到同名文件或目录时依次使用 `example (2).pdf`、`example (3).pdf`，以独占创建避免覆盖已有文件。文件名中的路径和不安全字符会被清理，超长名称会按 UTF-8 字节限制缩短，内部元数据保留前缀会添加下划线。附件与消息的关联仍由元数据中的 ID 和实际路径维护。已有附件保持原名和原位置，带消息 ID 前缀的旧附件继续按记录的路径读取；老会话后续上传的附件也使用新命名规则。未设置 `CODEX_HOME` 时默认使用 `~/.codex`；相对路径按 Web UI 启动目录解析，并将同一绝对路径传给 Codex。项目的 `cwd` 保持不变，不再在项目中创建 `.files` 或修改 `.gitignore`。
+
+Web UI 的会话文件规则内置于 [server/web-instructions.ts](server/web-instructions.ts)，无需独立模板文件。启动时检查 `${CODEX_HOME}/AGENTS.md`，将内置规则安装到 `codex-web:thread-files` 标记块中。规则一致时不重复写入；内置规则更新时只更新这个块，保留其他内容。规则只适用于带有 Web UI 文件上下文的轮次。每轮仅提供当前会话目录的绝对路径和本轮附件路径，内部上下文不显示在消息气泡里。安装发生在启动 Codex app-server 之前；此前已运行的其他 Codex 会话需要重新加载全局指令。
+
+默认独立交付文件与附件直接保存在会话目录，用户指定其他位置时尊重用户要求；项目源码和构建产物仍保存在项目路径。后端确保会话目录存在，但生成文件仍由 Agent 保存。Ask when needed 模式只将当前会话目录额外加入可写范围，不开放整个 `CODEX_HOME`；只读模式不允许 Agent 写文件。Use config.toml 的传统 workspace-write 配置也增加当前会话目录；命名权限配置保持原定义，其访问范围需要用户在该配置中允许。
+
+恢复旧会话时，workspace 下的 `.files/<thread.id>/`、旧版 `uploads/` 和 `CODEX_HOME/attachments/codex-web/` 附件仍从原位置读取，不自动迁移。分叉会话的新文件使用新 thread 目录，历史附件继续引用父会话；历史回复中的父会话文件链接可预览图片或直接下载原文件。删除会话不会删除新会话目录或项目中的旧文件，避免误删交付文件和分叉仍在使用的文件；确认不再需要后，可按 thread 目录手动清理。
+
+子路径部署示例：
+
+```bash
+export CODEX_WEB_HOST=127.0.0.1
+export CODEX_WEB_PORT=8765
+export CODEX_WEB_BASE_PATH=/codex
+npm start
+```
+
+访问：
+
+```text
+http://127.0.0.1:8765/codex/
+```
+
+注意：只写 `CODEX_WEB_BASE_PATH=/codex` 而不使用 `export`，后续单独执行的 `npm start` 不会继承这个变量。
+
 ## Files 文件管理与上传
 
 Files 抽屉顶部提供两个独立入口：
@@ -602,7 +611,7 @@ Files 搜索会查找子目录中的文件名/相对路径，跳过构建产物�
 
 刷新该地址会等待 Codex app-server ready，然后自动执行 thread resume。点击 session 或通过 URL 恢复 session 时，页面会立即显示全局 Loading 遮罩，并在恢复成功或失败后解除，避免重复点击。`session` 可以与 `file` 参数共存；选择新 workspace、创建空白对话或删除当前 session 时会清除旧的 session 参数。
 
-每条已完成的 Codex 文本回复下方提供复制与分支操作。复制会保留回答的原始 Markdown；分支使用 app-server 原生 `thread/fork` 与该回复的 `lastTurnId` 创建新 session，只保留到这条回复为止，后续对话不会带入，原 session 也不会被修改。这里不提供点赞、点踩等无关操作。Thread/Turn 提供的时间会显示在用户与 Codex 消息下方；历史消息使用 turn 开始/完成时间，实时消息使用 item 事件时间。
+每条已完成的 Codex 文本回复下方提供复制与分支操作。复制会保留回答的原始 Markdown；分支使用 app-server 原生 `thread/fork` 与该回复的 `lastTurnId` 创建新 session，只保留到这条回复为止，后续对话不会带入，原 session 也不会被修改。会话运行或排队时，仍可从之前已结束的 turn 创建分支；当前正在执行的 turn 需等待结束后才能分支，原任务会继续执行。这里不提供点赞、点踩等无关操作。Thread/Turn 提供的时间会显示在用户与 Codex 消息下方；历史消息使用 turn 开始/完成时间，实时消息使用 item 事件时间。
 
 点击 New thread 时，默认模型与 reasoning effort 会按默认 workspace 的有效 `config.toml` 重新加载；手动选择其他 workspace 后，改为读取所选目录的配置。模型与 reasoning effort 对应 `model`、`model_reasoning_effort`；仅在配置未指定时，才回退到 app-server 模型目录中标记为默认的模型。权限独立使用服务端持久保存的 Web UI 全局设置，打开会话或切换目录不会重置；选择 **Use config.toml** 时才在新轮次开始前应用所选目录的权限配置。
 
@@ -624,7 +633,7 @@ RSS 包含 V8 之外的 Buffer 和原生内存，因此可能高于当前 heap u
 
 ### 2 核 2G 的默认运行策略
 
-- Web UI 默认同时执行 **1 个 turn**，最多再排队 **8 个**；可通过 `CODEX_WEB_MAX_TURNS=1..4` 调整并行数。排队内容暂存在系统临时目录，避免 Base64 附件常驻 Node 堆；启动执行或取消后清除。停止/重启 Codex 会取消队列，不会在服务重启后自动执行旧任务。强制杀进程可能留下 `codex-web-queue-*` 临时目录，可在确认服务已停止后清理。
+- Web UI 默认同时执行 **1 个 turn**；`CODEX_WEB_MAX_TURNS` 可设为 `1`–`4`，总任务容量与外部运行会话的影响见 [并发与排队](#并发与排队codex_web_max_turns)。排队内容暂存在系统临时目录，避免 Base64 附件常驻 Node 堆；启动执行或取消后清除。停止/重启 Codex 会取消队列，不会在服务重启后自动执行旧任务。强制杀进程可能留下 `codex-web-queue-*` 临时目录，可在确认服务已停止后清理。
 - 并行限制针对此 Web UI 提交的任务，并会等待已发现的外部运行会话；不能替代操作系统对其他 Codex 实例、编译器或 MCP 进程的资源限制。
 - Node 不缓存打开过的完整会话。优先使用 `thread/items/list` 分页读取；不支持该接口的旧版 Codex 回退到 `thread/read`。旧版上游仍可能一次返回完整历史，因此超长会话建议升级 Codex。历史恢复请求串行执行，限制排队数量。
 - 增量事件缓冲同时限制 **1000 条 / 8 MiB**，SSE 按通常最多 **512 KiB** 的批次补发（单条较大事件单独发送）。长连接每 15 秒发送心跳，客户端检测超时并退避重连；慢客户端暂停写入，持续阻塞会断开连接。游标失效、落后于缓冲窗口或服务重启时，会静默重新同步当前会话，保留侧边栏分页和滚动位置。正常连接不显示 Header 状态标签，持续断线超过 4 秒才显示可重试错误，恢复后自动清除。
@@ -638,49 +647,82 @@ RSS 包含 V8 之外的 Buffer 和原生内存，因此可能高于当前 heap u
 
 已有后台脚本适合手动管理；需要崩溃恢复和开机启动时，使用上方的 systemd 配置。不要同时用后台脚本和 systemd 启动同一个端口。
 
+## 开发运行
+
+开发模式不需要 `dist/` 或 `dist-server/`：
+
+```bash
+cd /path/to/codex-webui-lite
+npm install
+npm run dev
+```
+
+默认打开：
+
+```text
+http://127.0.0.1:8765/
+```
+
+前端修改由 Vite 即时加载，后端入口通过 `tsx server/index.ts --dev` 运行。后端未启用自动重启，修改 `server/` 后需手动重启开发服务。环境变量与生产模式相同。
+
+## 目录说明
+
+| 路径           | 用途                               | 是否手工修改   |
+| -------------- | ---------------------------------- | -------------- |
+| `src/`         | React/TSX 前端源码                 | 是             |
+| `server/`      | Node/TypeScript 服务端源码         | 是             |
+| `scripts/`     | 启停、静态导出、压缩与验证脚本     | 是             |
+| `dist/`        | Vite 生成的前端生产文件            | 否，可删除重建 |
+| `dist-server/` | TypeScript 生成的服务端 JavaScript | 否，可删除重建 |
+
+`server/` 与 `dist-server/` 不是两套源码：
+
+```text
+server/*.ts  -- npm run build -->  dist-server/*.js
+src/*        -- npm run build -->  dist/*
+```
+
+前后端源码分别维护在 `src/` 和 `server/`。`dist/`、`dist-server/` 已加入 `.gitignore`，不要直接编辑或提交；删除后可通过 `npm run build` 重新生成。
+
+## 代码格式化
+
+项目使用 Prettier，配置在 `.prettierrc.json`。格式化源码与文档：
+
+```bash
+npm run format
+```
+
+仅检查格式，不修改文件：
+
+```bash
+npm run format:check
+```
+
+生成目录、依赖目录、运行文件和 npm 管理的 `package-lock.json` 通过 `.prettierignore` 排除。
+
 ## 验证
 
 不连接真实 Codex 的自动回归：
 
 ```bash
 npm test
-npm run build
-python scripts/verify_regressions.py
 ```
 
-浏览器回归需要 Python Playwright 和 Chromium；覆盖中文输入、发送失败、断线同步、审批隔离、文件搜索/编辑保护、手机与横屏布局。测试使用模拟 API，不会执行真实模型任务。截图保存在 `artifacts/regressions/`。
+测试源码位于 `tests/`，覆盖事件流、事件重放和会话列表合并。检查格式和生产构建分别使用 `npm run format:check`、`npm run build`。
 
-分页参数参考上游 [ThreadItemsListParams](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/json/v2/ThreadItemsListParams.json) 和 [ThreadResumeParams](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/json/v2/ThreadResumeParams.json)。真实 CLI 兼容性与流式验证仍使用下面的脚本。
+浏览器验证脚本位于 `scripts/verify_ui.py` 与 `scripts/verify_streaming.py`，需要 Python Playwright、Chromium 和已启动的 Web 服务。它们目前硬编码了原开发机的 Chromium 路径，并依赖部分旧版 UI 选择器；使用前需按本机浏览器位置和当前界面检查、调整，不能当作开箱即用的回归命令。
 
-先启动一个生产服务：
+- `verify_ui.py` 检查演示界面、真实服务连接和历史会话恢复；截图写入 `artifacts/screenshots/`。
+- `verify_streaming.py` 会向真实 Codex 发送消息和附件，执行模型任务并产生用量。
+- 两者均通过 `CODEX_WEB_VERIFY_URL` 指定目标，默认 `http://127.0.0.1:8876/codex/`。需要验证时，使用已安装 Playwright 的 Python 环境运行相应脚本。
 
-```bash
-npm run build
-CODEX_WEB_PORT=8876 CODEX_WEB_BASE_PATH=/codex npm start
-```
-
-运行完整 UI 验证：
-
-```bash
-/home/pldz/local/venv/bin/python scripts/verify_ui.py
-```
-
-运行真实 Codex 流式验证：
-
-```bash
-CODEX_WEB_VERIFY_URL=http://127.0.0.1:8876/codex/ \
-/home/pldz/local/venv/bin/python scripts/verify_streaming.py
-```
-
-截图输出到 `artifacts/screenshots/`。
-
-开发 UI fixture：
+仅查看演示界面时，在已启动的服务中访问：
 
 ```text
 http://127.0.0.1:8765/?demo=1
 ```
 
-`?demo=1` 不会连接真实 Codex，只用于 UI 开发与截图验证。
+演示页面的对话操作在浏览器中模拟，不会发送模型任务；还可使用 `?demo=questions` 或 `?demo=plan`。Web 服务本身仍会启动 Codex；需要完全不运行 Node 后端或 Codex 的演示，参见 [纯静态 mock](#纯静态-mock无需-node-后端)。
 
 ## 常见问题
 
@@ -713,6 +755,10 @@ npm run build
 5. 点击 **New thread** 检查目录。刷新旧的 `?session=<id>` 地址会恢复旧 session 的 workspace；分支也继承源 session 的 workspace。
 
 默认目录只控制新对话的工作目录。若检查的是附件或独立交付文件，应在 **Session files** 中查看 `${CODEX_HOME}/web-ui/<thread.id>/`。
+
+### 多个会话为什么只有一个在执行
+
+默认 `CODEX_WEB_MAX_TURNS=1`，其他会话提交后会排队。需要并发时在启动 Web 服务前设为 `2`、`3` 或 `4`，再重启 Web 服务；在页面中仅重启 Codex 不会更新此项。等待回答或审批的任务、已发现的外部运行会话也会占用名额。配置范围和示例见 [环境变量](#环境变量)。
 
 ### Account usage 显示 Unavailable
 
