@@ -240,7 +240,7 @@ npm start
 
 队列总容量为 **8 + 并发数**，包含保存、等待、启动和执行中的任务，满额后拒绝新提交。无外部运行会话时，默认可执行 1 个、再等待 8 个。已发现的外部运行会话也占用调度名额，但不受此 Web UI 的并发设置控制。
 
-请填写 `1`–`4` 的整数。实现先向下取整，再限制到此范围；未设置、空值或无法解析时使用 `1`。2 核 2 GB 机器可保留默认值。
+请填写 `1`–`4` 的整数。实现先向下取整，再限制到此范围；未设置、空值或无法解析时使用 `1`。小型服务器或其他资源有限的设备建议保留默认值，按实际任务调整。
 
 停止旧前台服务后启动并发为 2 的实例：
 
@@ -350,7 +350,9 @@ network_access = false
 
 ## 部署
 
-### 2 核 2 GB Linux 示例
+可根据运行环境选择部署方式：小型 Linux 服务器可使用后台脚本或 systemd，Android Termux 可配合 tmux 管理终端会话。
+
+### 小型 Linux 服务器示例
 
 准备专用用户，确保该用户已登录 `codex`，并能访问项目和 workspace。以下以项目 `/srv/codex-webui-lite`、用户 `codex` 为例，在该用户的终端执行：
 
@@ -370,6 +372,20 @@ npm start
 ```
 
 先通过 `http://127.0.0.1:8765/codex/` 确认服务正常。远程访问交给 Nginx HTTPS 代理，代理路径与 `CODEX_WEB_BASE_PATH` 一致。
+
+### Android Termux / tmux
+
+在 Termux 中准备好符合[环境要求](#环境要求)的 Node.js、Codex CLI 和 tmux，完成 Codex 登录。进入项目目录后安装依赖并构建，再在 tmux 会话中启动：
+
+```bash
+cd ~/codex-webui-lite
+npm ci
+npm run build
+tmux new -s codex-web
+npm start
+```
+
+在 Android 浏览器打开 `http://127.0.0.1:8765/`。按 `Ctrl+B` 后按 `D` 可分离 tmux 会话，使用 `tmux attach -t codex-web` 返回；停止服务时在会话内按 `Ctrl+C`。tmux 不提供开机自启动，也无法阻止 Android 回收 Termux 进程。
 
 ### 后台脚本
 
@@ -472,7 +488,7 @@ CPUQuota=180%
 WantedBy=multi-user.target
 ```
 
-以上资源值用于 2 核 2 GB 主机：`MemoryHigh` 在接近 1.4 GB 时施加回收压力，`MemoryMax` 将 Web UI、Codex 及其子进程组限制在约 1.65 GB，为系统留出约 400 MB。资源项需 cgroup/systemd 支持，不支持的属性可移除。
+以上资源限制仅作示例：`MemoryHigh` 设置内存回收压力阈值，`MemoryMax` 限制 Web UI、Codex 及其子进程组的总内存，`CPUQuota` 限制 CPU 使用量。请根据设备容量和实际任务调整或移除这些值，为系统和其他服务留出资源；资源项需 cgroup/systemd 支持，不支持的属性可移除。
 
 启用服务并查看日志：
 
@@ -661,7 +677,7 @@ Prettier 配置在 [`.prettierrc.json`](.prettierrc.json)，生成目录、依�
 
 RSS 包含 Buffer 和原生内存，可能高于 heap usage，Codex 是独立子进程。Linux Resources 面板统计 Node、app-server、仍在进程树中的工具/MCP 子进程 RSS 和事件缓冲；共享内存可能重复计入，脱离进程树的服务不在统计中。Windows 无 `/proc`，子进程采样不可用。
 
-并发限制只调度 Web UI 任务并等待已发现的外部会话，不限制其他 Codex 实例、编译器或 MCP 进程。项目构建、浏览器自动化和大型工具仍可能超过 2 GB 主机容量，需按任务控制资源；长期运行可配合 systemd。
+并发限制只调度 Web UI 任务并等待已发现的外部会话，不限制其他 Codex 实例、编译器或 MCP 进程。项目构建、浏览器自动化和大型工具的资源需求取决于任务，需按设备容量控制。长期运行方式可按环境选择后台脚本、systemd 或 tmux。
 
 ## 常见问题
 
