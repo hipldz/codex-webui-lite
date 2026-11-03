@@ -9,6 +9,8 @@ const snapshotTypes = new Set([
   "turn.queued",
   "turn.accepted",
   "turn.failed",
+  "turn.status",
+  "turn.unconfirmed",
 ]);
 
 export function includedInSnapshot(

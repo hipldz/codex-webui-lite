@@ -350,7 +350,7 @@ network_access = false
 
 ## 部署
 
-可根据运行环境选择部署方式：小型 Linux 服务器可使用后台脚本或 systemd，Android Termux 可配合 tmux 管理终端会话。
+本项目是针对小型服务器专门写的codex的webui,  本人常用的是2h2g的云服务器，Windows，项目初期也测试过Android Termux平台等小型服务器。
 
 ### 小型 Linux 服务器示例
 

@@ -33,7 +33,7 @@ export type UiItem = TimedItem &
         text: string;
         attachments?: UserAttachment[];
         attachmentThreadId?: string;
-        delivery?: "sending" | "queued" | "sent" | "failed";
+        delivery?: "sending" | "unknown" | "queued" | "sent" | "failed";
         failure?: string;
       }
     | {

@@ -42,7 +42,7 @@ function open(
   response: Response,
   cursor = 0,
   lastId?: string,
-  instance = hub.instance,
+  instance: string = hub.instance,
 ) {
   const url = new URL("http://localhost/api/events/stream");
   url.searchParams.set("cursor", String(cursor));

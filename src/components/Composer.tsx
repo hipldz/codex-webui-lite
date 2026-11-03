@@ -22,6 +22,7 @@ import { ModelPicker } from "./ModelPicker";
 import { EffortPicker } from "./EffortPicker";
 import { ComposerPicker } from "./ComposerPicker";
 import { MOBILE_LAYOUT_QUERY } from "../hooks/useMobileViewport";
+import { DraftSubmissions } from "../draft-submissions";
 
 export type ComposerAttachment = {
   id: string;
@@ -31,7 +32,7 @@ export type ComposerAttachment = {
   data: string;
   size: number;
 };
-type ComposerDraft = { text: string; attachments: ComposerAttachment[] };
+type ComposerDraft = { text: string; attachments: ComposerAttachment[]; submissionId?: string };
 const hasDraft = (draft: ComposerDraft) => Boolean(draft.text || draft.attachments.length);
 
 function resizeComposerInput(element: HTMLTextAreaElement | null) {
@@ -138,6 +139,7 @@ export function Composer({
   sending = false,
   queued = false,
   restoreDraft,
+  submissionReceipts,
   draftKey,
   disabled,
   send,
@@ -170,10 +172,13 @@ export function Composer({
     threadId: string;
     text: string;
     attachments: ComposerAttachment[];
+    submissionId?: string;
+    preserveCurrent?: boolean;
   } | null;
+  submissionReceipts: ReadonlyMap<string, boolean>;
   draftKey: string;
   disabled: boolean;
-  send: (text: string, attachments: ComposerAttachment[]) => Promise<boolean>;
+  send: (text: string, attachments: ComposerAttachment[], submissionId: string) => Promise<boolean>;
   stop: () => void;
   models: ModelOption[];
   model: string;
@@ -199,6 +204,7 @@ export function Composer({
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const drafts = useRef(new Map<string, ComposerDraft>());
+  const submissions = useRef(new DraftSubmissions());
   const alternateDrafts = useRef(new Map<string, ComposerDraft[]>());
   const [alternateCount, setAlternateCount] = useState(0);
   const currentDraftKey = useRef(draftKey);
@@ -223,9 +229,11 @@ export function Composer({
       previousKey === "workspace:unselected" &&
       draftKey.startsWith("workspace:") &&
       draftKey !== previousKey;
+    const createdThread =
+      previousKey.startsWith("workspace:") && draftKey.startsWith("thread:") && submitting.current;
     const existing = drafts.current.get(draftKey);
     const transferring =
-      firstWorkspace &&
+      (firstWorkspace || createdThread) &&
       (hasDraft(currentDraft.current) || attachmentTarget.current?.key === previousKey);
     if (transferring && existing && hasDraft(existing)) {
       const alternates = alternateDrafts.current.get(draftKey) || [];
@@ -233,7 +241,8 @@ export function Composer({
       alternateDrafts.current.set(draftKey, alternates);
     }
     const next = transferring ? currentDraft.current : existing || { text: "", attachments: [] };
-    if (firstWorkspace) {
+    if (firstWorkspace || createdThread) {
+      submissions.current.transfer(previousKey, draftKey);
       drafts.current.delete(previousKey);
       if (attachmentTarget.current?.key === previousKey) attachmentTarget.current.key = draftKey;
     }
@@ -245,6 +254,20 @@ export function Composer({
     setAttachmentError("");
     setPreview(null);
   }, [draftKey]);
+  const settleSubmission = (id: string, accepted: boolean) => {
+    const key = submissions.current.settle(id, accepted);
+    if (!key) return;
+    drafts.current.delete(key);
+    if (currentDraftKey.current === key) {
+      currentDraft.current = { text: "", attachments: [] };
+      setText("");
+      setAttachments([]);
+      setAttachmentError("");
+    }
+  };
+  useEffect(() => {
+    for (const [id, accepted] of submissionReceipts) settleSubmission(id, accepted);
+  }, [submissionReceipts]);
   useEffect(() => {
     const element = wrapper.current;
     const parent = element?.closest<HTMLElement>(".chat-main");
@@ -293,6 +316,7 @@ export function Composer({
       draftKey === `thread:${restoreDraft.threadId}`
     ) {
       restoredDraftId.current = restoreDraft.id;
+      if (restoreDraft.submissionId && submissionReceipts.get(restoreDraft.submissionId)) return;
       const current = currentDraft.current;
       const same =
         current.text === restoreDraft.text &&
@@ -301,16 +325,29 @@ export function Composer({
       if (!same && hasDraft(current)) {
         const key = currentDraftKey.current;
         const alternates = alternateDrafts.current.get(key) || [];
+        if (restoreDraft.preserveCurrent) {
+          alternates.push({
+            text: restoreDraft.text,
+            attachments: restoreDraft.attachments,
+            submissionId: restoreDraft.submissionId,
+          });
+          alternateDrafts.current.set(key, alternates);
+          setAlternateCount(alternates.length);
+          return;
+        }
         alternates.push(current);
         alternateDrafts.current.set(key, alternates);
         setAlternateCount(alternates.length);
       }
       currentDraft.current = { text: restoreDraft.text, attachments: restoreDraft.attachments };
+      submissions.current.edit(currentDraftKey.current);
+      if (restoreDraft.submissionId)
+        submissions.current.restore(currentDraftKey.current, restoreDraft.submissionId);
       setText(restoreDraft.text);
       setAttachments(restoreDraft.attachments);
       area.current?.focus();
     }
-  }, [restoreDraft, addingFiles, draftKey]);
+  }, [restoreDraft, addingFiles, draftKey, submissionReceipts]);
   const switchDraft = () => {
     const key = currentDraftKey.current;
     const alternates = alternateDrafts.current.get(key);
@@ -320,6 +357,8 @@ export function Composer({
     if (!alternates.length) alternateDrafts.current.delete(key);
     setAlternateCount(alternates.length);
     currentDraft.current = next;
+    submissions.current.edit(key);
+    if (next.submissionId) submissions.current.restore(key, next.submissionId);
     setText(next.text);
     setAttachments(next.attachments);
     setAttachmentError("");
@@ -338,25 +377,10 @@ export function Composer({
     )
       return;
     submitting.current = true;
-    const submittedKey = currentDraftKey.current;
-    const submittedDraft = { text, attachments };
-    const restoreSubmittedDraft = () => {
-      if (!submittedKey.startsWith("workspace:") || currentDraftKey.current === submittedKey)
-        return;
-      const saved = drafts.current.get(submittedKey) || submittedDraft;
-      drafts.current.delete(submittedKey);
-      setText(saved.text);
-      setAttachments(saved.attachments);
-    };
+    const submissionId = submissions.current.begin(currentDraftKey.current);
     try {
-      if (await send(text.trim(), attachments)) {
-        drafts.current.delete(submittedKey);
-        setText("");
-        setAttachments([]);
-        setAttachmentError("");
-      } else restoreSubmittedDraft();
+      if (await send(text.trim(), attachments, submissionId)) settleSubmission(submissionId, true);
     } catch (error) {
-      restoreSubmittedDraft();
       setAttachmentError(
         error instanceof Error ? error.message : "Could not send; your draft is preserved",
       );
@@ -402,9 +426,11 @@ export function Composer({
           size: file.size,
         });
       }
+      if (currentDraftKey.current === target.key) submissions.current.edit(target.key);
       if (currentDraftKey.current === target.key)
         setAttachments((old) => [...old, ...next].slice(0, 4));
       else {
+        submissions.current.edit(target.key);
         const saved = drafts.current.get(target.key) || { text: "", attachments: [] };
         drafts.current.set(target.key, {
           ...saved,
@@ -524,9 +550,10 @@ export function Composer({
                     type="button"
                     className="attachment-remove"
                     aria-label={`Remove ${attachment.name}`}
-                    onClick={() =>
-                      setAttachments((old) => old.filter((item) => item.id !== attachment.id))
-                    }
+                    onClick={() => {
+                      submissions.current.edit(currentDraftKey.current);
+                      setAttachments((old) => old.filter((item) => item.id !== attachment.id));
+                    }}
                   >
                     <X />
                   </button>
@@ -564,7 +591,10 @@ export function Composer({
                         : "Ask Codex to work on your code"
             }
             onPaste={paste}
-            onChange={(event) => setText(event.target.value)}
+            onChange={(event) => {
+              submissions.current.edit(currentDraftKey.current);
+              setText(event.target.value);
+            }}
             onCompositionStart={() => {
               composing.current = true;
             }}

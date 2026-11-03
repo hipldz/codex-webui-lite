@@ -11,6 +11,8 @@ type Job = {
   state: "saving" | "queued" | "starting" | "running";
   cancelled: boolean;
   generation: number;
+  turnId?: string;
+  unconfirmed?: boolean;
 };
 
 /** Queued uploads live on disk, never in closures retaining Base64 buffers. */
@@ -62,7 +64,32 @@ export class TurnQueue {
   }
   status(threadId: string) {
     const job = [...this.jobs.values()].find((entry) => entry.threadId === threadId);
-    return job ? { queued: job.state !== "running", messageId: job.messageId } : null;
+    return job
+      ? {
+          queued: job.state !== "running",
+          messageId: job.messageId,
+          turnId: job.turnId,
+          unconfirmed: Boolean(job.unconfirmed),
+        }
+      : null;
+  }
+  started(threadId: string, turnId: string) {
+    const job = [...this.jobs.values()].find((entry) => entry.threadId === threadId);
+    if (job && (job.state === "starting" || job.unconfirmed) && !job.turnId) {
+      job.turnId = turnId;
+      if (job.unconfirmed) {
+        job.unconfirmed = false;
+        this.emit(
+          this.remember(job.key, {
+            type: "turn.accepted",
+            threadId,
+            messageId: job.messageId,
+            turnId,
+            running: true,
+          }),
+        );
+      }
+    }
   }
   private remember(key: string, value: any) {
     value.receiptVersion = ++this.version;
@@ -75,7 +102,12 @@ export class TurnQueue {
     const key = `${payload.threadId}:${payload.clientUserMessageId}`;
     if (this.receipts.has(key)) return this.receipts.get(key);
     if (this.jobs.get(key)?.state === "saving")
-      throw new Error("This message is still being saved; retry shortly");
+      return {
+        type: "turn.unconfirmed",
+        threadId: payload.threadId,
+        messageId: payload.clientUserMessageId,
+        message: "This message is still being saved; delivery is unconfirmed",
+      };
     if ([...this.jobs.values()].some((job) => job.threadId === payload.threadId))
       throw new Error("This thread already has a pending turn");
     if (this.jobs.size >= this.capacity + this.concurrency)
@@ -135,16 +167,46 @@ export class TurnQueue {
         () => job.cancelled || job.generation !== this.generation,
       );
       if (job.generation !== this.generation) return;
-      if (this.jobs.get(job.key) === job) job.state = "running";
-      else receipt.running = false; // A very short turn can finish before the RPC response.
+      if (this.jobs.get(job.key) === job) {
+        job.state = "running";
+        job.turnId = receipt.turnId;
+      } else receipt.running = false; // A very short turn can finish before the RPC response.
       this.remember(job.key, receipt);
       this.emit(receipt);
       if (receipt.running === false) {
-        this.jobs.delete(job.key);
+        if (this.jobs.get(job.key) === job) this.jobs.delete(job.key);
         this.pump();
       }
     } catch (error) {
       if (job.generation !== this.generation) return;
+      if (this.jobs.get(job.key) !== job) return;
+      if ((error as any)?.deliveryUnknown) {
+        // The RPC timeout did not cancel Codex. Retain its slot until a matching
+        // turn is confirmed or the runtime is stopped; do not start a duplicate.
+        job.state = "running";
+        job.unconfirmed = !job.turnId;
+        this.emit(
+          this.remember(
+            job.key,
+            job.turnId
+              ? {
+                  type: "turn.accepted",
+                  threadId: job.threadId,
+                  messageId: job.messageId,
+                  turnId: job.turnId,
+                  running: true,
+                }
+              : {
+                  type: "turn.unconfirmed",
+                  threadId: job.threadId,
+                  messageId: job.messageId,
+                  message:
+                    "Codex did not confirm starting this turn. Checking its state automatically.",
+                },
+          ),
+        );
+        return;
+      }
       this.jobs.delete(job.key);
       const receipt = {
         type: "turn.failed",
@@ -159,12 +221,26 @@ export class TurnQueue {
       if (job.file) await fs.rm(job.file, { force: true }).catch(() => {});
     }
   }
-  completed(threadId: string) {
+  completed(threadId: string, turnId: string, messageId?: string) {
     for (const [key, job] of this.jobs)
-      if (job.threadId === threadId && (job.state === "running" || job.state === "starting")) {
+      if (
+        job.threadId === threadId &&
+        job.turnId === turnId &&
+        (!messageId || job.messageId === messageId) &&
+        (job.state === "running" || job.state === "starting")
+      ) {
         this.jobs.delete(key);
         const receipt = this.receipts.get(key);
-        if (receipt?.type === "turn.accepted") this.remember(key, { ...receipt, running: false });
+        this.emit(
+          this.remember(key, {
+            ...receipt,
+            type: "turn.accepted",
+            threadId,
+            messageId: job.messageId,
+            turnId,
+            running: false,
+          }),
+        );
       }
     this.pump();
   }

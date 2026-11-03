@@ -29,6 +29,7 @@ import { useTaskNotifications } from "./hooks/useTaskNotifications";
 import { useTheme } from "./hooks/useTheme";
 import { mergeThreadList, mergeThreadSummary } from "./thread-list";
 import { getBranchableResponseIds, threadIsRunning } from "./thread-status";
+import { readOutgoing, writeOutgoing, type OutgoingSubmission } from "./outgoing-store";
 import type {
   CollaborationMode,
   ApprovalDecision,
@@ -152,6 +153,20 @@ const displayAttachment = (item: ComposerAttachment) => ({
   size: item.size,
   data: item.kind === "image" ? item.data : undefined,
 });
+const outgoingItem = (prompt: OutgoingSubmission): UiItem => ({
+  type: "user_message",
+  id: prompt.id,
+  text: prompt.text,
+  attachments: prompt.attachments.map(displayAttachment),
+  timestamp: prompt.timestamp,
+  delivery: prompt.state,
+  ...(prompt.state === "unknown"
+    ? {
+        failure:
+          "Delivery is unconfirmed. Your draft is preserved; checking the server automatically.",
+      }
+    : {}),
+});
 const lastTurnIndex = (value: UiItem[], turnId: string) => {
   for (let index = value.length - 1; index >= 0; index--)
     if (value[index].turnId === turnId) return index;
@@ -219,6 +234,8 @@ export function App() {
   const activeRef = useRef(active);
   activeRef.current = active;
   const [items, setItems] = useState<UiItem[]>(demo ? initialDemoItems : []);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   const [pendingInteractions, setPendingInteractions] = useState<PendingInteraction[]>([]);
   const pendingInteractionsRef = useRef<PendingInteraction[]>([]);
   const commitInteractions = useCallback((value: PendingInteraction[]) => {
@@ -269,18 +286,55 @@ export function App() {
   const [turnId, setTurnId] = useState<string>();
   const [queued, setQueued] = useState(false);
   const submitting = useRef(false);
-  const outgoing = useRef(
-    new Map<
-      string,
-      { id: string; text: string; attachments: ComposerAttachment[]; threadId: string }
-    >(),
-  );
+  const outgoing = useRef(new Map<string, OutgoingSubmission>());
+  const [submissionReceipts, setSubmissionReceipts] = useState(new Map<string, boolean>());
+  const touchedOutgoing = useRef(new Set<string>());
+  const [recoveryVersion, setRecoveryVersion] = useState(0);
+  const [recoveryError, setRecoveryError] = useState("");
+  const [turnStatusError, setTurnStatusError] = useState("");
+  const lastTurnActivity = useRef(new Map<string, number>());
+  const liveTurn = useRef<{ threadId: string; turnId?: string; running: boolean }>({
+    threadId: "",
+    running: false,
+  });
+  const latestSubmissions = useRef(new Map<string, string>());
+  const reconciledTurns = useRef(new Set<string>());
+  const saveOutgoing = useCallback((prompt: OutgoingSubmission) => {
+    touchedOutgoing.current.add(prompt.id);
+    outgoing.current.set(prompt.id, prompt);
+    if (!demo)
+      void writeOutgoing(prompt).catch(() =>
+        setRecoveryError(
+          "The recovery copy could not be saved. Keep this tab open until delivery is confirmed.",
+        ),
+      );
+  }, []);
+  const forgetOutgoing = useCallback((id: string) => {
+    touchedOutgoing.current.add(id);
+    outgoing.current.delete(id);
+    if (!demo)
+      void writeOutgoing(id).catch(() =>
+        setRecoveryError("The saved recovery copy could not be updated."),
+      );
+  }, []);
+  const recordReceipt = useCallback((id: string, accepted: boolean) => {
+    if (!id) return;
+    touchedOutgoing.current.add(id);
+    setSubmissionReceipts((old) => {
+      if (old.get(id) === accepted) return old;
+      const next = new Map(old).set(id, accepted);
+      while (next.size > 128) next.delete(next.keys().next().value!);
+      return next;
+    });
+  }, []);
   const lastAttempt = useRef<{ signature: string; id: string } | null>(null);
   const [restoreDraft, setRestoreDraft] = useState<{
     id: string;
     threadId: string;
     text: string;
     attachments: ComposerAttachment[];
+    submissionId?: string;
+    preserveCurrent?: boolean;
   } | null>(null);
   const [scrollRequest, setScrollRequest] = useState(0);
   const [sidebar, setSidebar] = useState(false);
@@ -464,6 +518,31 @@ export function App() {
 
   const onMessage = useCallback(
     (message: any) => {
+      if (
+        message.threadId &&
+        ["event", "items", "turn.accepted", "turn.queued", "turn.failed"].includes(message.type)
+      ) {
+        lastTurnActivity.current.set(message.threadId, Date.now());
+        while (lastTurnActivity.current.size > 256)
+          lastTurnActivity.current.delete(lastTurnActivity.current.keys().next().value!);
+        if (message.threadId === activeRef.current?.id) setTurnStatusError("");
+      }
+      const supersededSubmission =
+        message.messageId &&
+        latestSubmissions.current.has(message.threadId) &&
+        latestSubmissions.current.get(message.threadId) !== message.messageId;
+      if (["event", "items"].includes(message.type) && Array.isArray(message.items)) {
+        message = {
+          ...message,
+          items: message.items.map((item: UiItem) => {
+            if (item.type !== "user_message" || item.delivery || !outgoing.current.has(item.id))
+              return item;
+            recordReceipt(item.id, true);
+            forgetOutgoing(item.id);
+            return { ...item, delivery: "sent", failure: undefined };
+          }),
+        };
+      }
       if (message.settings) {
         const { permission: nextPermission, revision } = message.settings;
         if (
@@ -630,7 +709,7 @@ export function App() {
           activeRef.current?.id === message.thread.id ? activeRef.current : undefined,
           message.thread,
         );
-        const nextItems = message.workspace?.error
+        let nextItems: UiItem[] = message.workspace?.error
           ? [
               {
                 type: "error",
@@ -640,6 +719,23 @@ export function App() {
               ...(message.items || []),
             ]
           : message.items || [];
+        for (const prompt of outgoing.current.values()) {
+          if (prompt.threadId !== thread.id) continue;
+          const saved = nextItems.find(
+            (item) => item.id === prompt.id && item.type === "user_message",
+          );
+          if (
+            saved &&
+            saved.type === "user_message" &&
+            (!saved.delivery || saved.delivery === "sent")
+          ) {
+            recordReceipt(prompt.id, true);
+            forgetOutgoing(prompt.id);
+          } else if (saved?.type === "user_message" && saved.delivery === "queued") {
+            recordReceipt(prompt.id, true);
+            saveOutgoing({ ...prompt, state: "queued" });
+          } else if (!saved) nextItems = mergeItems(nextItems, [outgoingItem(prompt)]);
+        }
         setMode(message.collaborationMode === "plan" ? "plan" : "default");
         const initialFileForThread = preserveInitialFile.current && thread.id === initialSession;
         preserveInitialFile.current = false;
@@ -673,10 +769,19 @@ export function App() {
         setRunning(
           Boolean(
             message.queued ||
+            message.unconfirmed ||
             (typeof message.running === "boolean" ? message.running : threadIsRunning(thread)),
           ),
         );
         setTurnId(message.turnId);
+        liveTurn.current = {
+          threadId: thread.id,
+          turnId: message.turnId,
+          running: Boolean(message.running || message.queued || message.unconfirmed),
+        };
+        setTurnStatusError(
+          message.unconfirmed ? "Task status is unknown. Checking with Codex automatically." : "",
+        );
         const status =
           typeof message.running === "boolean"
             ? { type: message.running ? "active" : "idle" }
@@ -714,6 +819,9 @@ export function App() {
           old?.id === message.thread.id ? mergeThreadSummary(old, message.thread) : old,
         );
       } else if (message.type === "thread.mutated") {
+        if (message.action === "delete")
+          for (const prompt of outgoing.current.values())
+            if (prompt.threadId === message.threadId) forgetOutgoing(prompt.id);
         if (message.action === "delete")
           commitInteractions(
             pendingInteractionsRef.current.filter((entry) => entry.threadId !== message.threadId),
@@ -760,6 +868,19 @@ export function App() {
         if (message.threadId === activeRef.current?.id)
           setItems((old) => mergeItems(old, message.items));
       } else if (message.type === "event") {
+        if (
+          message.threadId === liveTurn.current.threadId &&
+          message.turnId &&
+          message.running === false &&
+          liveTurn.current.turnId &&
+          message.turnId !== liveTurn.current.turnId
+        )
+          return;
+        if (message.running === false && message.turnId && message.turnStatus) {
+          reconciledTurns.current.add(`${message.threadId}:${message.turnId}`);
+          while (reconciledTurns.current.size > 128)
+            reconciledTurns.current.delete(reconciledTurns.current.values().next().value!);
+        }
         if (message.turnStatus === "completed" && message.threadId && message.turnId) {
           const thread = threadsRef.current.find((entry) => entry.id === message.threadId);
           notifyTaskComplete(
@@ -823,25 +944,35 @@ export function App() {
               : message.running
             : undefined;
           if (typeof nextRunning === "boolean") {
+            liveTurn.current = {
+              threadId: message.threadId,
+              turnId: nextRunning ? message.turnId || liveTurn.current.turnId : undefined,
+              running: nextRunning,
+            };
             setRunning(nextRunning);
             setQueued(false);
             if (!nextRunning) {
               setTurnId(undefined);
-              for (const [id, prompt] of outgoing.current)
-                if (prompt.threadId === message.threadId) outgoing.current.delete(id);
             }
           }
           if (message.turnId && nextRunning !== false) setTurnId(message.turnId);
         }
       } else if (message.type === "turn.queued") {
-        setThreads((old) =>
-          old.map((thread) =>
-            thread.id === message.threadId ? { ...thread, queued: true } : thread,
-          ),
-        );
+        recordReceipt(message.messageId, true);
+        const prompt = outgoing.current.get(message.messageId);
+        if (prompt) saveOutgoing({ ...prompt, state: "queued" });
+        if (!supersededSubmission)
+          setThreads((old) =>
+            old.map((thread) =>
+              thread.id === message.threadId ? { ...thread, queued: true } : thread,
+            ),
+          );
         if (message.threadId === activeRef.current?.id) {
-          setQueued(true);
-          setRunning(true);
+          if (!supersededSubmission) {
+            setQueued(true);
+            setRunning(true);
+            liveTurn.current = { threadId: message.threadId, running: true };
+          }
           setItems((old) =>
             old.map((item) =>
               item.id === message.messageId && item.type === "user_message"
@@ -850,19 +981,43 @@ export function App() {
             ),
           );
         }
-      } else if (message.type === "turn.failed") {
-        setThreads((old) =>
-          old.map((thread) =>
-            thread.id === message.threadId
-              ? { ...thread, queued: false, status: { type: "idle" } }
-              : thread,
-          ),
-        );
-        lastAttempt.current = null;
+      } else if (message.type === "turn.unconfirmed") {
+        const prompt = outgoing.current.get(message.messageId);
+        if (prompt) saveOutgoing({ ...prompt, state: "unknown" });
         if (message.threadId === activeRef.current?.id) {
-          setQueued(false);
-          setRunning(false);
-          setTurnId(undefined);
+          setItems((old) =>
+            old.map((item) =>
+              item.type === "user_message" && item.id === message.messageId
+                ? { ...item, delivery: "unknown", failure: message.message }
+                : item,
+            ),
+          );
+          if (!supersededSubmission) {
+            setRunning(true);
+            setQueued(false);
+            setTurnStatusError("Task status is unknown. Checking with Codex automatically.");
+          }
+        }
+      } else if (message.type === "turn.failed") {
+        recordReceipt(message.messageId, false);
+        const prompt = outgoing.current.get(message.messageId);
+        if (prompt) saveOutgoing({ ...prompt, state: "failed" });
+        if (!supersededSubmission)
+          setThreads((old) =>
+            old.map((thread) =>
+              thread.id === message.threadId
+                ? { ...thread, queued: false, status: { type: "idle" } }
+                : thread,
+            ),
+          );
+        if (!supersededSubmission) lastAttempt.current = null;
+        if (message.threadId === activeRef.current?.id) {
+          if (!supersededSubmission) {
+            setQueued(false);
+            setRunning(false);
+            setTurnId(undefined);
+            liveTurn.current = { threadId: message.threadId, running: false };
+          }
           setItems((old) =>
             old.map((item) =>
               item.id === message.messageId && item.type === "user_message"
@@ -872,8 +1027,31 @@ export function App() {
           );
         }
       } else if (message.type === "turn.accepted") {
-        outgoing.current.delete(message.messageId);
-        if (message.threadId)
+        recordReceipt(message.messageId, true);
+        const prompt = outgoing.current.get(message.messageId);
+        // Commit the preview only once Codex has accepted the user message.
+        if (prompt) {
+          const preview = (
+            prompt.text.trim().replace(/\s+/g, " ") ||
+            prompt.attachments.map((item) => item.name).join(", ")
+          ).slice(0, 30);
+          const updatePreview = (thread: Thread) =>
+            thread.id === prompt.threadId &&
+            !thread.name &&
+            (!thread.preview || thread.preview === "New thread") &&
+            preview
+              ? { ...thread, preview }
+              : thread;
+          setThreads((old) => old.map(updatePreview));
+          setActive((old) => (old ? updatePreview(old) : old));
+          forgetOutgoing(message.messageId);
+        }
+        const superseded =
+          supersededSubmission ||
+          (message.threadId === liveTurn.current.threadId &&
+            liveTurn.current.turnId &&
+            liveTurn.current.turnId !== message.turnId);
+        if (message.threadId && !superseded)
           setThreads((old) =>
             old.map((thread) =>
               thread.id === message.threadId
@@ -886,11 +1064,18 @@ export function App() {
             ),
           );
         if (message.threadId !== activeRef.current?.id) return;
-        if (message.collaborationMode) setMode(message.collaborationMode);
-        setQueued(false);
-        setTurnId(message.running === false ? undefined : message.turnId);
-        setRunning(message.running !== false);
-        if (message.messageId && Array.isArray(message.attachments))
+        if (message.collaborationMode && !superseded) setMode(message.collaborationMode);
+        if (!superseded) {
+          setQueued(false);
+          setTurnId(message.running === false ? undefined : message.turnId);
+          setRunning(message.running !== false);
+          liveTurn.current = {
+            threadId: message.threadId,
+            turnId: message.running === false ? undefined : message.turnId,
+            running: message.running !== false,
+          };
+        }
+        if (message.messageId)
           setItems((old) =>
             old.map((item) => {
               if (item.type !== "user_message" || item.id !== message.messageId) return item;
@@ -898,13 +1083,81 @@ export function App() {
                 ...item,
                 delivery: "sent",
                 turnId: message.turnId,
-                attachments: message.attachments.map((attachment: any) => ({
-                  ...attachment,
-                  data: undefined,
-                })),
+                failure: undefined,
+                attachments: Array.isArray(message.attachments)
+                  ? message.attachments.map((attachment: any) => ({
+                      ...attachment,
+                      data: undefined,
+                    }))
+                  : item.attachments,
               };
             }),
           );
+      } else if (message.type === "turn.status") {
+        if (message.stale) return;
+        const latestId = latestSubmissions.current.get(message.threadId);
+        const pending = latestId ? outgoing.current.get(latestId) : undefined;
+        if (
+          pending &&
+          ["sending", "queued"].includes(pending.state) &&
+          message.messageId !== latestId
+        )
+          return;
+        if (message.threadId === liveTurn.current.threadId && liveTurn.current.running) {
+          if (message.messageId && latestId && message.messageId !== latestId) return;
+          if (
+            !message.running &&
+            !message.queued &&
+            liveTurn.current.turnId &&
+            message.completedTurnId !== liveTurn.current.turnId
+          )
+            return;
+        }
+        if (
+          submitting.current &&
+          latestSubmissions.current.has(message.threadId) &&
+          latestSubmissions.current.get(message.threadId) !== message.messageId
+        )
+          return;
+        const isRunning = Boolean(message.running || message.queued || message.unconfirmed);
+        setThreads((old) =>
+          old.map((thread) =>
+            thread.id === message.threadId
+              ? {
+                  ...thread,
+                  queued: Boolean(message.queued),
+                  status: { type: message.running ? "active" : "idle" },
+                }
+              : thread,
+          ),
+        );
+        if (message.threadId !== activeRef.current?.id) return;
+        const wasRunning =
+          liveTurn.current.threadId === message.threadId && liveTurn.current.running;
+        liveTurn.current = {
+          threadId: message.threadId,
+          running: isRunning,
+          turnId: message.turnId,
+        };
+        setRunning(isRunning);
+        setQueued(Boolean(message.queued));
+        setTurnId(message.turnId);
+        setTurnStatusError(
+          message.unconfirmed
+            ? "Task status is unknown. Codex has not confirmed this turn; checking again automatically."
+            : "",
+        );
+        const completedKey = `${message.threadId}:${message.completedTurnId}`;
+        if (
+          !isRunning &&
+          (wasRunning || (message.completedTurnId && !reconciledTurns.current.has(completedKey))) &&
+          beginSessionLoading(message.threadId, "Refreshing task result", true)
+        ) {
+          reconciledTurns.current.add(completedKey);
+          while (reconciledTurns.current.size > 128)
+            reconciledTurns.current.delete(reconciledTurns.current.values().next().value!);
+          void sendRef.current({ type: "thread.resume", threadId: message.threadId });
+        }
       } else if (message.type === "fs.entries") {
         pending.current.get(`list:${message.path}`)?.(message);
         pending.current.delete(`list:${message.path}`);
@@ -974,6 +1227,13 @@ export function App() {
       } else if (message.type === "system.usage") setResources(message.usage);
       else if (message.type === "account.usage") setAccount(message);
       else if (message.type === "error") {
+        if (message.action === "turn.status") {
+          if (message.threadId === activeRef.current?.id)
+            setTurnStatusError(
+              "Task status is unknown. Could not verify it with Codex; checking again automatically.",
+            );
+          return;
+        }
         if (
           ["input.respond", "approval.respond", "workspace.select", "settings.update"].includes(
             message.action,
@@ -993,16 +1253,26 @@ export function App() {
             );
             setWorkspacePicker(true);
           }
-          setRunning(false);
-          setQueued(false);
+          const prompt = outgoing.current.get(message.messageId);
+          const unknown = Boolean(message.deliveryUnknown);
+          if (prompt) saveOutgoing({ ...prompt, state: unknown ? "unknown" : "failed" });
+          if (!unknown) recordReceipt(message.messageId, false);
+          if (
+            !supersededSubmission &&
+            (!message.threadId || message.threadId === activeRef.current?.id)
+          ) {
+            setRunning(false);
+            setQueued(false);
+          }
           if (!message.transportError) lastAttempt.current = null;
           setItems((old) =>
             old.map((item) =>
               item.id === message.messageId && item.type === "user_message"
-                ? { ...item, delivery: "failed", failure: message.message }
+                ? { ...item, delivery: unknown ? "unknown" : "failed", failure: message.message }
                 : item,
             ),
           );
+          if (message.action === "turn.send") return;
         }
         setMessageHistory((old) => ({ ...old, loading: false }));
         setItems((old) => [
@@ -1012,6 +1282,9 @@ export function App() {
       }
     },
     [
+      recordReceipt,
+      saveOutgoing,
+      forgetOutgoing,
       finishSessionLoading,
       beginSessionLoading,
       notifyTaskComplete,
@@ -1029,6 +1302,81 @@ export function App() {
   } = useApiTransport(onMessage, demo);
   const sendRef = useRef(send);
   sendRef.current = send;
+  useEffect(() => {
+    if (demo) return;
+    let live = true;
+    void readOutgoing()
+      .then((messages) => {
+        if (!live) return;
+        for (const prompt of messages) {
+          if (touchedOutgoing.current.has(prompt.id)) continue;
+          outgoing.current.set(prompt.id, {
+            ...prompt,
+            state: prompt.state === "failed" ? "failed" : "unknown",
+          });
+        }
+        setRecoveryVersion((value) => value + 1);
+      })
+      .catch(() => {
+        if (live) setRecoveryError("Saved pending messages could not be loaded.");
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!active?.id || !recoveryVersion) return;
+    const pending = [...outgoing.current.values()].filter(
+      (prompt) => prompt.threadId === active.id,
+    );
+    const unresolved: OutgoingSubmission[] = [];
+    for (const prompt of pending) {
+      const saved = itemsRef.current.find(
+        (item) => item.id === prompt.id && item.type === "user_message",
+      );
+      if (saved?.type === "user_message" && (!saved.delivery || saved.delivery === "sent")) {
+        recordReceipt(prompt.id, true);
+        forgetOutgoing(prompt.id);
+      } else if (saved?.type === "user_message" && saved.delivery === "queued") {
+        recordReceipt(prompt.id, true);
+        saveOutgoing({ ...prompt, state: "queued" });
+      } else unresolved.push(prompt);
+    }
+    if (unresolved.length) setItems((old) => mergeItems(old, unresolved.map(outgoingItem)));
+    const latest = unresolved
+      .filter((prompt) => prompt.state === "unknown")
+      .sort((a, b) => b.timestamp - a.timestamp)[0];
+    if (latest)
+      setRestoreDraft({
+        ...latest,
+        id: `recovery:${latest.id}`,
+        submissionId: latest.id,
+        preserveCurrent: true,
+      });
+  }, [active?.id, recoveryVersion, recordReceipt, forgetOutgoing, saveOutgoing]);
+  const unconfirmedId = [...outgoing.current.values()].find(
+    (prompt) => prompt.threadId === active?.id && prompt.state === "unknown",
+  )?.id;
+  useEffect(() => {
+    if (demo || !active?.id || (!running && !queued && !unconfirmedId)) return;
+    const threadId = active.id;
+    let live = true;
+    let timer = 0;
+    const check = async () => {
+      if (!live) return;
+      if (!document.hidden && connected) {
+        const quietFor = Date.now() - (lastTurnActivity.current.get(threadId) || 0);
+        if (unconfirmedId || quietFor >= 45_000)
+          await send({ type: "turn.status", threadId, clientUserMessageId: unconfirmedId });
+      }
+      if (live) timer = window.setTimeout(check, 30_000);
+    };
+    timer = window.setTimeout(check, unconfirmedId ? 5000 : 45_000);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [active?.id, running, queued, unconfirmedId, connected, send]);
   const changePermission = async (next: PermissionPreset) => {
     if (permissionSavingRef.current || next === permission) return;
     setPermissionError("");
@@ -1245,6 +1593,7 @@ export function App() {
     text: string,
     attachments: ComposerAttachment[],
     nextMode: CollaborationMode = mode,
+    submissionId?: string,
   ) => {
     if (
       running ||
@@ -1262,6 +1611,7 @@ export function App() {
     setSending(true);
     setQueued(false);
     setTurnId(undefined);
+    setTurnStatusError("");
     let submittedThreadId = activeRef.current?.id || "";
     let submittedMessageId = "";
     try {
@@ -1281,22 +1631,6 @@ export function App() {
         }
       }
       submittedThreadId = thread?.id || "";
-      if (thread && !thread.name && (!thread.preview || thread.preview === "New thread")) {
-        const preview = (
-          text.trim().replace(/\s+/g, " ") || attachments.map((item) => item.name).join(", ")
-        ).slice(0, 30);
-        if (preview) {
-          thread = { ...thread, preview };
-          activeRef.current = thread;
-          setActive(thread);
-          const updated = thread;
-          setThreads((old) =>
-            old.map((entry) =>
-              entry.id === updated.id ? mergeThreadSummary(entry, updated) : entry,
-            ),
-          );
-        }
-      }
       const signature = JSON.stringify([
         thread?.id,
         nextMode,
@@ -1304,17 +1638,25 @@ export function App() {
         attachments.map((item) => item.id),
       ]);
       const localId =
-        lastAttempt.current?.signature === signature ? lastAttempt.current.id : crypto.randomUUID();
+        submissionId ||
+        (lastAttempt.current?.signature === signature
+          ? lastAttempt.current.id
+          : crypto.randomUUID());
       submittedMessageId = localId;
+      latestSubmissions.current.set(thread?.id || "demo", localId);
+      while (latestSubmissions.current.size > 256)
+        latestSubmissions.current.delete(latestSubmissions.current.keys().next().value!);
       lastAttempt.current = { signature, id: localId };
-      outgoing.current.set(localId, {
+      saveOutgoing({
         id: localId,
         text,
         attachments,
         threadId: thread?.id || "demo",
+        mode: nextMode,
+        state: "sending",
+        timestamp: Date.now(),
       });
-      while (outgoing.current.size > 12)
-        outgoing.current.delete(outgoing.current.keys().next().value!);
+      while (outgoing.current.size > 12) forgetOutgoing(outgoing.current.keys().next().value!);
       setItems((old) =>
         mergeItems(old, [
           {
@@ -1398,7 +1740,10 @@ export function App() {
       if (accepted) {
         lastAttempt.current = null;
         setMode(nextMode);
-      } else if (activeRef.current?.id === submittedThreadId) {
+      } else if (
+        !result.some((entry) => entry.type === "turn.unconfirmed") &&
+        activeRef.current?.id === submittedThreadId
+      ) {
         setRunning(false);
         setQueued(false);
         setTurnId(undefined);
@@ -1421,6 +1766,9 @@ export function App() {
           ),
         );
       }
+      recordReceipt(submittedMessageId, false);
+      const prompt = outgoing.current.get(submittedMessageId);
+      if (prompt) saveOutgoing({ ...prompt, state: "failed" });
       throw error;
     } finally {
       setSending(false);
@@ -2107,15 +2455,26 @@ export function App() {
             </div>
           )}
         <main className={`chat-main ${items.length === 0 ? "is-empty" : ""}`}>
+          {recoveryError && (
+            <div className="error-card" role="status">
+              {recoveryError}
+            </div>
+          )}
           <Conversation
             items={items}
             threadId={active?.id || ""}
             activeTurnId={turnId}
             running={running}
             queued={queued}
+            statusError={turnStatusError}
             retry={(id) => {
               const prompt = outgoing.current.get(id);
-              if (prompt) setRestoreDraft({ ...prompt, id: crypto.randomUUID() });
+              if (prompt)
+                setRestoreDraft({
+                  ...prompt,
+                  id: crypto.randomUUID(),
+                  submissionId: prompt.state === "unknown" ? prompt.id : undefined,
+                });
             }}
             scrollRequest={scrollRequest}
             workspace={meta.workspace}
@@ -2174,12 +2533,15 @@ export function App() {
             sending={sending}
             queued={queued}
             restoreDraft={restoreDraft}
+            submissionReceipts={submissionReceipts}
             disabled={
               sending ||
               permissionSaving ||
               ((!connected || meta.codexStatus !== "ready" || Boolean(sessionLoading)) && !demo)
             }
-            send={sendTurn}
+            send={(text, attachments, submissionId) =>
+              sendTurn(text, attachments, mode, submissionId)
+            }
             stop={() => {
               if (active) send({ type: "turn.interrupt", threadId: active.id, turnId });
             }}

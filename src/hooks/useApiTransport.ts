@@ -22,6 +22,7 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
   const epoch = useRef(0);
   const threadListVersion = useRef(0);
   const turnReceipts = useRef(new Map<string, (data: { messages: any[] }) => void>());
+  const threadVersions = useRef(new Map<string, number>());
 
   const request = useCallback(async (url: string, init?: RequestInit, timeout = 12_000) => {
     const controller = new AbortController();
@@ -33,7 +34,10 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
     try {
       const response = await fetch(url, { ...init, cache: "no-store", signal: controller.signal });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+      if (!response.ok)
+        throw Object.assign(new Error(data.error || `Request failed (${response.status})`), {
+          definitive: response.status >= 400 && response.status < 500,
+        });
       return data;
     } finally {
       window.clearTimeout(timer);
@@ -57,8 +61,26 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
         receipts.current.delete(receipts.current.keys().next().value!);
     }
     if (message.type === "thread.mutated") threadListVersion.current++;
+    const threadId = message.threadId || message.thread?.id;
+    if (
+      threadId &&
+      [
+        "event",
+        "items",
+        "turn.queued",
+        "turn.accepted",
+        "turn.failed",
+        "turn.unconfirmed",
+        "thread.active",
+        "turn.status",
+      ].includes(message.type)
+    ) {
+      threadVersions.current.set(threadId, (threadVersions.current.get(threadId) || 0) + 1);
+      while (threadVersions.current.size > 256)
+        threadVersions.current.delete(threadVersions.current.keys().next().value!);
+    }
     handler.current(message);
-    if (["turn.queued", "turn.accepted", "turn.failed"].includes(message.type))
+    if (["turn.queued", "turn.accepted", "turn.failed", "turn.unconfirmed"].includes(message.type))
       turnReceipts.current.get(message.messageId)?.({ messages: [message] });
   }, []);
 
@@ -307,6 +329,7 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
     async (message: any): Promise<any[]> => {
       if (disabled) return [];
       const listVersion = threadListVersion.current;
+      const threadVersion = threadVersions.current.get(message.threadId);
       const hydrate = ["thread.resume", "thread.fork"].includes(message.type);
       const stamp = hydrate ? ++epoch.current : epoch.current;
       const controller = new AbortController();
@@ -332,7 +355,7 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
           },
           // Creating a session and enqueuing a turn should be quick.
           // Allow more time for large uploads without leaving small requests stuck.
-          ["turn.send", "thread.create"].includes(message.type)
+          ["turn.send", "thread.create", "turn.status"].includes(message.type)
             ? body.length > 512 * 1024
               ? 60_000
               : 15_000
@@ -341,10 +364,18 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
         // The event stream can acknowledge a send before its HTTP response arrives.
         const data = receipt ? await Promise.race([response, receipt]) : await response;
         const messages = data.messages || [];
+        // A status response is a snapshot. Newer live events take precedence.
+        if (
+          message.type === "turn.status" &&
+          threadVersion !== threadVersions.current.get(message.threadId)
+        )
+          return [];
         if (
           receiptId &&
           !messages.some((item: any) =>
-            ["turn.queued", "turn.accepted", "turn.failed", "error"].includes(item.type),
+            ["turn.queued", "turn.accepted", "turn.failed", "turn.unconfirmed", "error"].includes(
+              item.type,
+            ),
           )
         )
           throw new Error("The server did not confirm message delivery. Your draft is preserved.");
@@ -379,6 +410,11 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
         }
         return messages;
       } catch (error) {
+        if (
+          message.type === "turn.status" &&
+          threadVersion !== threadVersions.current.get(message.threadId)
+        )
+          return [];
         const detail =
           error instanceof Error && error.name !== "AbortError"
             ? error.message
@@ -409,6 +445,7 @@ export function useApiTransport(onMessage: (message: any) => void, disabled = fa
           error: detail,
           message: detail,
           transportError: true,
+          deliveryUnknown: message.type === "turn.send" && !(error as any)?.definitive,
         };
         deliver(failed);
         return [failed];

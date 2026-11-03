@@ -139,7 +139,11 @@ export class CodexClient extends EventEmitter {
     return new Promise<any>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`${method} timed out`));
+        reject(
+          Object.assign(new Error(`${method} timed out`), {
+            deliveryUnknown: method === "turn/start",
+          }),
+        );
       }, 60_000);
       timer.unref();
       this.pending.set(id, { resolve, reject, timer });

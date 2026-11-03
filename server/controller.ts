@@ -195,6 +195,7 @@ export class CodexController {
   private summaryTimer?: ReturnType<typeof setTimeout>;
   private summaryBusy = false;
   private summaryGeneration = 0;
+  private stateChecks = new Map<string, Promise<any>>();
 
   constructor(
     private codex: CodexClient,
@@ -240,6 +241,17 @@ export class CodexController {
     });
     codex.on("message", (message) => {
       const threadId = message.params?.threadId;
+      const eventTurnId = message.params?.turn?.id || message.params?.turnId;
+      const currentTurnId = this.activeTurns.get(threadId) || this.queue.status(threadId)?.turnId;
+      // A delayed terminal event from the preceding turn cannot finish a newer one.
+      if (
+        threadId &&
+        (message.method === "turn/completed" || message.method === "error") &&
+        currentTurnId &&
+        eventTurnId &&
+        currentTurnId !== eventTurnId
+      )
+        return;
       if (
         threadId &&
         ["turn/started", "turn/completed", "error", "thread/status/changed"].includes(
@@ -253,7 +265,10 @@ export class CodexController {
       }
       if (threadId && message.method === "turn/started") {
         this.runningThreads.add(threadId);
-        if (message.params?.turn?.id) this.activeTurns.set(threadId, message.params.turn.id);
+        if (eventTurnId) {
+          this.activeTurns.set(threadId, eventTurnId);
+          this.queue.started(threadId, eventTurnId);
+        }
         const plan = this.plans.get(threadId);
         if (plan?.item.ready) {
           plan.item = { ...plan.item, ready: false };
@@ -263,20 +278,22 @@ export class CodexController {
       if (
         threadId &&
         (message.method === "turn/completed" ||
-          (message.method === "error" && !message.params?.willRetry))
+          (message.method === "error" && !message.params?.willRetry && eventTurnId))
       ) {
         this.runningThreads.delete(threadId);
         this.activeTurns.delete(threadId);
-        this.queue.completed(threadId);
+        if (eventTurnId) this.queue.completed(threadId, eventTurnId);
       }
       if (threadId && message.method === "thread/status/changed") {
         if (message.params?.status?.type === "active") this.runningThreads.add(threadId);
         else {
-          this.runningThreads.delete(threadId);
-          this.activeTurns.delete(threadId);
-          this.queue.pump();
+          // idle has no turn ID. Verify it before releasing a slot or publishing
+          // an idle state, since it may have been delayed past a new turn/start.
+          void this.reconcileThread(threadId).catch(() => {});
         }
       }
+      if (threadId && message.method === "error" && !message.params?.willRetry && !eventTurnId)
+        void this.reconcileThread(threadId).catch(() => {});
       this.busy = this.runningThreads.size > 0;
       if (
         threadId &&
@@ -357,6 +374,14 @@ export class CodexController {
           if (entry.threadId === message.params?.threadId) this.expireApproval(id);
       const event = adapt(message);
       if (event) {
+        if (
+          (message.method === "thread/status/changed" &&
+            message.params?.status?.type !== "active") ||
+          (message.method === "error" && !eventTurnId)
+        ) {
+          delete event.threadStatus;
+          delete event.running;
+        }
         if (message.method === "turn/started" || message.method === "turn/completed") {
           const turn = message.params?.turn;
           event.turnStartedAt = timestampMs(
@@ -839,6 +864,82 @@ export class CodexController {
     };
   }
 
+  private reconcileThread(threadId: string): Promise<any> {
+    const existing = this.stateChecks.get(threadId);
+    if (existing) return existing;
+    if (this.codex.status !== "ready") return Promise.reject(new Error("Codex is not ready"));
+    if (this.stateChecks.size >= 4)
+      return Promise.reject(new Error("Status checks are busy; retry shortly"));
+    const revision = this.stateRevisions.get(threadId);
+    const generation = this.summaryGeneration;
+    const job = this.queue.status(threadId);
+    const work = (async () => {
+      const [read, turns] = await Promise.all([
+        this.codex.request("thread/read", { threadId, includeTurns: false }),
+        this.codex.request("thread/turns/list", {
+          threadId,
+          limit: 1,
+          sortDirection: "desc",
+          itemsView: "notLoaded",
+        }),
+      ]);
+      if (!read.thread?.id || !Array.isArray(turns.data))
+        throw new Error("Invalid turn status response");
+      if (
+        generation !== this.summaryGeneration ||
+        revision !== this.stateRevisions.get(threadId) ||
+        job?.messageId !== this.queue.status(threadId)?.messageId ||
+        job?.turnId !== this.queue.status(threadId)?.turnId
+      )
+        return { type: "turn.status", threadId, stale: true };
+      const latest = turns.data[0];
+      const terminal = latest && ["completed", "failed", "interrupted"].includes(latest.status);
+      const running = read.thread.status?.type === "active" || latest?.status === "inProgress";
+      if (!running && ((latest && !terminal) || (!terminal && read.thread.status?.type !== "idle")))
+        throw new Error("The current turn state could not be verified");
+      if (!running && job?.turnId && latest?.id !== job.turnId)
+        throw new Error("The queued turn state could not be verified");
+      if (running) {
+        this.runningThreads.add(threadId);
+        if (latest?.status === "inProgress") {
+          this.activeTurns.set(threadId, latest.id);
+          if (latest.clientUserMessageId === job?.messageId)
+            this.queue.started(threadId, latest.id);
+        }
+      } else {
+        this.runningThreads.delete(threadId);
+        this.activeTurns.delete(threadId);
+        if (terminal) this.queue.completed(threadId, latest.id, job?.messageId);
+        else this.queue.pump();
+      }
+      this.busy = this.runningThreads.size > 0;
+      const pending = this.queue.status(threadId);
+      this.stateRevisions.delete(threadId);
+      this.stateRevisions.set(threadId, ++this.stateRevision);
+      while (this.stateRevisions.size > 256)
+        this.stateRevisions.delete(this.stateRevisions.keys().next().value!);
+      const state = {
+        type: "turn.status",
+        threadId,
+        running,
+        queued: pending?.queued || false,
+        unconfirmed: pending?.unconfirmed || false,
+        messageId: pending?.messageId || job?.messageId,
+        turnId: this.activeTurns.get(threadId),
+        completedTurnId: !running && terminal ? latest.id : undefined,
+      };
+      this.events.push(state);
+      return state;
+    })();
+    this.stateChecks.set(threadId, work);
+    void work
+      .finally(() => {
+        if (this.stateChecks.get(threadId) === work) this.stateChecks.delete(threadId);
+      })
+      .catch(() => {});
+    return work;
+  }
+
   private async activate(result: any, since: number) {
     const thread = result.thread;
     const previousSummary = this.threadSummaries.get(thread.id);
@@ -942,6 +1043,7 @@ export class CodexController {
         ),
       running: this.runningThreads.has(thread.id),
       queued: this.queue.status(thread.id)?.queued || false,
+      unconfirmed: this.queue.status(thread.id)?.unconfirmed || false,
       turnId: this.activeTurns.get(thread.id),
       model: result.model,
       effort: result.reasoningEffort,
@@ -1004,7 +1106,8 @@ export class CodexController {
         throw new Error("Turn interrupted");
       }
       const running =
-        this.queue.status(threadId) !== null &&
+        this.queue.status(threadId)?.messageId === messageId &&
+        (!this.activeTurns.has(threadId) || this.activeTurns.get(threadId) === result.turn.id) &&
         result.turn.status !== "completed" &&
         result.turn.status !== "failed" &&
         result.turn.status !== "interrupted";
@@ -1025,7 +1128,8 @@ export class CodexController {
         attachments: persisted?.attachments || [],
       };
     } catch (error) {
-      if (persisted && !accepted) await this.attachments.removeMessage(threadId, messageId);
+      if (persisted && !accepted && !(error as any)?.deliveryUnknown)
+        await this.attachments.removeMessage(threadId, messageId);
       throw error;
     }
   }
@@ -1106,6 +1210,15 @@ export class CodexController {
 
   private async handleAction(msg: any): Promise<any[]> {
     try {
+      if (msg.type === "turn.status") {
+        const state = await this.reconcileThread(String(msg.threadId || ""));
+        if (state.stale) return [state];
+        const receipt =
+          typeof msg.clientUserMessageId === "string"
+            ? this.queue.receipt(msg.threadId, msg.clientUserMessageId)
+            : undefined;
+        return [...(receipt ? [receipt] : []), state];
+      }
       if (msg.type === "settings.read")
         return [{ type: "settings.updated", settings: this.settings.snapshot }];
       if (msg.type === "settings.update") {

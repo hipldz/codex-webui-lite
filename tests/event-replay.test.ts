@@ -15,6 +15,8 @@ test("hydrating one session does not discard another session's buffered updates"
   assert.equal(includedInSnapshot(event("items", 77, "current"), snapshots), true);
   assert.equal(includedInSnapshot(event("event", 78, "current"), snapshots), true);
   assert.equal(includedInSnapshot(event("thread.changed", 79, "current"), snapshots), true);
+  assert.equal(includedInSnapshot(event("turn.status", 80, "current"), snapshots), true);
+  assert.equal(includedInSnapshot(event("turn.unconfirmed", 81, "current"), snapshots), true);
 });
 
 test("global runtime changes and thread mutations still replay after a snapshot", () => {

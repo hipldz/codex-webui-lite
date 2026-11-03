@@ -128,6 +128,7 @@ type ActivityGroupProps = {
   items: ActivityItem[];
   active: boolean;
   durationMs?: number;
+  startedAt?: number;
   workspace: string;
   sessionDirectory: string;
   inheritedDirectories: string[];
@@ -147,8 +148,28 @@ function formatDuration(milliseconds: number) {
     .join(" ");
 }
 
+function ActivityDuration({ startedAt, durationMs }: { startedAt?: number; durationMs?: number }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (startedAt === undefined) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [startedAt]);
+  const elapsed = startedAt === undefined ? durationMs : now - startedAt;
+  if (elapsed === undefined) return null;
+  return (
+    <span
+      className="activity-duration"
+      title={startedAt === undefined ? "Total turn duration" : "Elapsed turn duration"}
+    >
+      {formatDuration(elapsed)}
+    </span>
+  );
+}
+
 const ActivityGroup = memo(
-  function ActivityGroup({ items, active, durationMs, ...context }: ActivityGroupProps) {
+  function ActivityGroup({ items, active, durationMs, startedAt, ...context }: ActivityGroupProps) {
     const [open, setOpen] = useState(false);
     const count = (type: ActivityItem["type"]) => items.filter((item) => item.type === type).length;
     const failed = items.filter(
@@ -181,11 +202,7 @@ const ActivityGroup = memo(
               {active ? "Codex is reasoning and using tools" : summary}
             </small>
           </span>
-          {!active && durationMs !== undefined && (
-            <span className="activity-duration" title="Total turn duration">
-              {formatDuration(durationMs)}
-            </span>
-          )}
+          <ActivityDuration startedAt={startedAt} durationMs={durationMs} />
           <ChevronRight className={`activity-chevron ${open ? "open" : ""}`} />
         </button>
         {open && (
@@ -211,6 +228,7 @@ const ActivityGroup = memo(
   (before, after) =>
     before.active === after.active &&
     before.durationMs === after.durationMs &&
+    before.startedAt === after.startedAt &&
     before.items.length === after.items.length &&
     before.items.every((item, index) => item === after.items[index]) &&
     before.workspace === after.workspace &&
@@ -434,6 +452,7 @@ export function Conversation({
   activeTurnId,
   running,
   queued = false,
+  statusError = "",
   retry,
   scrollRequest,
   workspace,
@@ -456,6 +475,7 @@ export function Conversation({
   activeTurnId?: string;
   running: boolean;
   queued?: boolean;
+  statusError?: string;
   retry?: (id: string) => void;
   scrollRequest: number;
   workspace: string;
@@ -499,6 +519,19 @@ export function Conversation({
     () => getTurnProgress({ items, running, queued, turnId: activeTurnId }),
     [items, running, queued, activeTurnId],
   );
+  const turnStartedAt = useMemo(() => {
+    const starts = progress.items
+      .map((item) => item.turnStartedAt)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    if (starts.length) return Math.min(...starts);
+    // Older live histories can omit the turn timing; use the first activity
+    // timestamp so time spent waiting in the queue is not included.
+    const timestamps = progress.items
+      .filter((item) => item.type !== "user_message")
+      .map((item) => item.timestamp)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    return timestamps.length ? Math.min(...timestamps) : undefined;
+  }, [progress.items]);
   const activeActivityId = useMemo(() => {
     if (progress.phase !== "working") return;
     // Earlier groups can retain stale running items, including before an answer
@@ -618,6 +651,15 @@ export function Conversation({
               items={segment.items}
               active={segment.id === activeActivityId}
               durationMs={segment.turnId ? turnDurations.get(segment.turnId) : undefined}
+              startedAt={
+                running &&
+                !queued &&
+                (segment.turnId && activeTurnId
+                  ? segment.turnId === activeTurnId
+                  : segment.id === activeActivityId)
+                  ? turnStartedAt
+                  : undefined
+              }
               key={`${threadId}:${segment.id}`}
               workspace={workspace}
               sessionDirectory={sessionDirectory}
@@ -710,9 +752,14 @@ export function Conversation({
                 {segment.item.delivery === "queued" && (
                   <small className="delivery-state">Waiting in queue</small>
                 )}
-                {segment.item.delivery === "failed" && (
+                {(segment.item.delivery === "failed" || segment.item.delivery === "unknown") && (
                   <div className="delivery-failed">
-                    <span>{segment.item.failure || "Message failed"}</span>
+                    <span>
+                      {segment.item.failure ||
+                        (segment.item.delivery === "unknown"
+                          ? "Delivery unconfirmed; your draft is preserved"
+                          : "Message failed")}
+                    </span>
                     <button
                       type="button"
                       disabled={running}
@@ -855,25 +902,31 @@ export function Conversation({
             </div>
           ) : null,
         )}
-        {showProgress && (
+        {(showProgress || statusError) && (
           <div className="thinking-live" role="status">
             <LoaderCircle />
             <div>
               <b>
-                {progress.phase === "queued"
-                  ? "Queued"
-                  : progress.phase === "starting"
-                    ? "Starting"
-                    : "Working"}
+                {statusError
+                  ? "Status unknown"
+                  : progress.phase === "queued"
+                    ? "Queued"
+                    : progress.phase === "starting"
+                      ? "Starting"
+                      : "Working"}
               </b>
               <span>
-                {progress.phase === "queued"
-                  ? "Waiting for another task to finish. You can cancel with Stop."
-                  : progress.phase === "starting"
-                    ? "Codex is preparing the turn"
-                    : "Waiting for the next update"}
+                {statusError ||
+                  (progress.phase === "queued"
+                    ? "Waiting for another task to finish. You can cancel with Stop."
+                    : progress.phase === "starting"
+                      ? "Codex is preparing the turn"
+                      : "Waiting for the next update")}
               </span>
             </div>
+            {!statusError && progress.phase === "working" && (
+              <ActivityDuration startedAt={turnStartedAt} />
+            )}
           </div>
         )}
       </div>
