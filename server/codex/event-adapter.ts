@@ -95,6 +95,9 @@ export function adapt(message: JsonRpcMessage): {
   running?: boolean;
   turnId?: string;
   turnStatus?: string;
+  turnStartedAt?: number;
+  turnCompletedAt?: number;
+  turnDurationMs?: number;
   threadStatus?: { type: string; activeFlags?: string[] };
   diff?: string;
   tokenUsage?: any;

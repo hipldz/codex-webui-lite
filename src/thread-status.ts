@@ -3,6 +3,34 @@ import type { Thread, UiItem } from "./types";
 export const threadIsRunning = (thread: Pick<Thread, "status" | "queued">) =>
   Boolean(thread.queued) || (typeof thread.status === "object" && thread.status?.type === "active");
 
+export function getTurnDurations(items: UiItem[]): Map<string, number> {
+  const durations = new Map<string, number>();
+  const timings = new Map<string, { start?: number; end?: number }>();
+  for (const item of items) {
+    if (!item.turnId) continue;
+    if (
+      typeof item.turnDurationMs === "number" &&
+      Number.isFinite(item.turnDurationMs) &&
+      item.turnDurationMs >= 0
+    )
+      durations.set(item.turnId, item.turnDurationMs);
+    const timing = timings.get(item.turnId) || {};
+    if (item.turnStartedAt) timing.start = item.turnStartedAt;
+    if (item.turnCompletedAt) timing.end = item.turnCompletedAt;
+    timings.set(item.turnId, timing);
+  }
+  for (const [turnId, { start, end }] of timings)
+    if (
+      !durations.has(turnId) &&
+      start !== undefined &&
+      end !== undefined &&
+      Number.isFinite(end - start) &&
+      end >= start
+    )
+      durations.set(turnId, end - start);
+  return durations;
+}
+
 type TurnPhase = "idle" | "queued" | "starting" | "working" | "responding" | "waiting";
 
 export function getTurnProgress({

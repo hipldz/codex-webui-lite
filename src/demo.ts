@@ -14,6 +14,9 @@ export const demoItems: UiItem[] = [
     text: "Add input validation for the `/api/users` endpoint.",
     timestamp: demoNow - 85_000,
     turnId: "demo-turn-1",
+    turnStartedAt: demoNow - 85_000,
+    turnCompletedAt: demoNow - 16_000,
+    turnDurationMs: 69_000,
   },
   {
     type: "assistant_message",

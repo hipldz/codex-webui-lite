@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Bell,
   FolderOpen,
@@ -24,6 +24,7 @@ import { WorkspacePicker } from "./components/WorkspacePicker";
 import { demoItems, demoThreads, demoQuestionItems, demoPlanItems } from "./demo";
 import { useApiTransport } from "./hooks/useApiTransport";
 import { useMobileViewport } from "./hooks/useMobileViewport";
+import { useSidebarResize } from "./hooks/useSidebarResize";
 import { useTaskNotifications } from "./hooks/useTaskNotifications";
 import { useTheme } from "./hooks/useTheme";
 import { mergeThreadList, mergeThreadSummary } from "./thread-list";
@@ -284,6 +285,7 @@ export function App() {
   const [scrollRequest, setScrollRequest] = useState(0);
   const [sidebar, setSidebar] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarResize = useSidebarResize();
   const [files, setFiles] = useState(false);
   const [fileTarget, setFileTarget] = useState(initialFile);
   const [settings, setSettings] = useState(false);
@@ -431,8 +433,7 @@ export function App() {
       const newlyPending = snapshot.filter(
         (item) =>
           !pendingInteractionsRef.current.some(
-            (old) =>
-              old.threadId === item.threadId && old.id === item.id && old.type === item.type,
+            (old) => old.threadId === item.threadId && old.id === item.id && old.type === item.type,
           ),
       );
       commitInteractions(snapshot);
@@ -789,6 +790,29 @@ export function App() {
           );
         }
         if (!message.threadId || message.threadId === activeRef.current?.id) {
+          if (message.turnId && (message.turnStartedAt || message.turnCompletedAt))
+            setItems((old) => {
+              const lastUser = old.reduce(
+                (last, item, index) => (item.type === "user_message" ? index : last),
+                -1,
+              );
+              return old.map((item, index) =>
+                item.turnId === message.turnId ||
+                (message.running === true && index === lastUser && !item.turnId)
+                  ? {
+                      ...item,
+                      turnId: message.turnId,
+                      ...(message.turnStartedAt ? { turnStartedAt: message.turnStartedAt } : {}),
+                      ...(message.turnCompletedAt
+                        ? { turnCompletedAt: message.turnCompletedAt }
+                        : {}),
+                      ...(typeof message.turnDurationMs === "number"
+                        ? { turnDurationMs: message.turnDurationMs }
+                        : {}),
+                    }
+                  : item,
+              );
+            });
           if (message.items) setItems((old) => mergeItems(old, message.items));
           if (message.diff !== undefined) setDiff(message.diff);
           if (message.tokenUsage) setThreadUsage(message.tokenUsage);
@@ -1920,7 +1944,10 @@ export function App() {
     }
   };
   return (
-    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+    <div
+      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${sidebarResize.resizing ? "sidebar-resizing" : ""}`}
+      style={{ "--sidebar-width": `${sidebarResize.width}px` } as CSSProperties}
+    >
       {boot.active && !connectionError && !boot.error && (
         <div className="boot-loading" role="status">
           <div className="boot-card">
@@ -1944,6 +1971,9 @@ export function App() {
       )}
       <div className="desktop-sidebar">
         <Sidebar {...sidebarProps} onCollapse={() => setSidebarCollapsed(true)} />
+        {!sidebarCollapsed && (
+          <div className="sidebar-resize-handle" {...sidebarResize.handleProps} />
+        )}
       </div>
       <section className="workspace-shell">
         <header className="workspace-header">

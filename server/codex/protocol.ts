@@ -18,7 +18,14 @@ export type Question = {
 };
 export type QuestionAnswers = Record<string, { answers: string[] }>;
 export type CollaborationMode = "default" | "plan";
-type TimedItem = { timestamp?: number; turnId?: string; delta?: boolean };
+type TimedItem = {
+  timestamp?: number;
+  turnId?: string;
+  turnStartedAt?: number;
+  turnCompletedAt?: number;
+  turnDurationMs?: number;
+  delta?: boolean;
+};
 export type UiItem = TimedItem &
   (
     | {

@@ -357,6 +357,19 @@ export class CodexController {
           if (entry.threadId === message.params?.threadId) this.expireApproval(id);
       const event = adapt(message);
       if (event) {
+        if (message.method === "turn/started" || message.method === "turn/completed") {
+          const turn = message.params?.turn;
+          event.turnStartedAt = timestampMs(
+            turn?.startedAtMs ?? turn?.startedAt ?? message.params?.startedAtMs,
+          );
+          if (message.method === "turn/started") event.turnStartedAt ||= Date.now();
+          else
+            event.turnCompletedAt =
+              timestampMs(
+                turn?.completedAtMs ?? turn?.completedAt ?? message.params?.completedAtMs,
+              ) || Date.now();
+          if (typeof turn?.durationMs === "number") event.turnDurationMs = turn.durationMs;
+        }
         if (event.items) {
           const timestamp =
             timestampMs(message.params?.completedAtMs ?? message.params?.startedAtMs) || Date.now();
@@ -678,7 +691,7 @@ export class CodexController {
       }
     }
     this.fileAncestors.set(thread.id, sources);
-    for (const { turn, item } of rawItems) {
+    for (const { turn, item, startedAtMs, completedAtMs } of rawItems) {
       if (item.type === "userMessage") {
         let attachmentThreadId = thread.id;
         let stored = await this.attachments.load(thread.id, item.id, turn.id);
@@ -709,7 +722,10 @@ export class CodexController {
           type: "user_message",
           id: item.id,
           turnId: turn.id,
-          timestamp: timestampMs(turn.startedAt),
+          timestamp: timestampMs(startedAtMs ?? turn.startedAt),
+          turnStartedAt: timestampMs(turn.startedAt),
+          turnCompletedAt: timestampMs(turn.completedAt),
+          turnDurationMs: turn.durationMs ?? undefined,
           ...userMessage(item.content || [], stored),
           ...(stored ? { attachmentThreadId } : {}),
         });
@@ -718,13 +734,18 @@ export class CodexController {
           method: "item/completed",
           params: { threadId: thread.id, turnId: turn.id, item },
         });
-        const timestamp = timestampMs(turn.completedAt ?? turn.startedAt);
+        const timestamp = timestampMs(
+          completedAtMs ?? startedAtMs ?? turn.completedAt ?? turn.startedAt,
+        );
         result.push(
           ...(mapped?.items || []).map((entry) => ({
             ...entry,
             ...(entry.type === "question" ? { status: "expired" as const } : {}),
             turnId: turn.id,
             timestamp,
+            turnStartedAt: timestampMs(turn.startedAt),
+            turnCompletedAt: timestampMs(turn.completedAt),
+            turnDurationMs: turn.durationMs ?? undefined,
           })),
         );
       }

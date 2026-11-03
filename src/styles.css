@@ -63,7 +63,7 @@ svg {
   height: 100dvh;
   min-height: 0;
   display: grid;
-  grid-template-columns: 272px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width, 272px) minmax(0, 1fr);
   overflow: hidden;
   background: var(--bg);
   transition: grid-template-columns 180ms ease;
@@ -77,10 +77,44 @@ svg {
 }
 
 .desktop-sidebar {
+  position: relative;
   min-width: 0;
   min-height: 0;
   opacity: 1;
   transition: opacity 120ms ease;
+}
+.app-shell.sidebar-resizing {
+  transition: none;
+}
+.app-shell.sidebar-resizing,
+.app-shell.sidebar-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+.sidebar-resize-handle {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.sidebar-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0 3px;
+  background: transparent;
+}
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:focus-visible::after,
+.sidebar-resizing .sidebar-resize-handle::after {
+  background: var(--blue);
+}
+.sidebar-resize-handle:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
 }
 .sidebar {
   height: 100%;
@@ -658,6 +692,30 @@ svg {
   overflow: hidden;
   background: var(--bg);
 }
+.conversation-to-bottom {
+  position: absolute;
+  right: max(20px, env(safe-area-inset-right));
+  bottom: calc(var(--composer-height, 148px) + 8px);
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 2px 8px rgba(23, 23, 18, 0.12);
+  cursor: pointer;
+}
+.conversation-to-bottom:hover {
+  background: var(--soft-hover);
+}
+.conversation-to-bottom svg {
+  width: 18px;
+  height: 18px;
+}
 .conversation {
   height: 100%;
   overflow-y: auto;
@@ -1082,6 +1140,12 @@ svg {
   flex: none;
   color: var(--muted);
   transition: transform 140ms ease;
+}
+.activity-duration {
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 .activity-chevron.open {
   transform: rotate(90deg);

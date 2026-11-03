@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowDown,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -17,7 +18,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FileScope, QuestionAnswers, UiItem } from "../types";
-import { getBranchableResponseIds, getTurnProgress } from "../thread-status";
+import { getBranchableResponseIds, getTurnDurations, getTurnProgress } from "../thread-status";
 import { visibleUserText } from "../user-message";
 import {
   markdownUrlTransform,
@@ -126,6 +127,7 @@ function StatusLine({ item }: { item: Extract<UiItem, { type: "status" }> }) {
 type ActivityGroupProps = {
   items: ActivityItem[];
   active: boolean;
+  durationMs?: number;
   workspace: string;
   sessionDirectory: string;
   inheritedDirectories: string[];
@@ -136,8 +138,17 @@ type ActivityGroupProps = {
   setPreviewImage: (image: { src: string; alt: string }) => void;
 };
 
+function formatDuration(milliseconds: number) {
+  const seconds = Math.max(1, Math.round(milliseconds / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return [hours && `${hours}h`, minutes && `${minutes}m`, `${seconds % 60}s`]
+    .filter(Boolean)
+    .join(" ");
+}
+
 const ActivityGroup = memo(
-  function ActivityGroup({ items, active, ...context }: ActivityGroupProps) {
+  function ActivityGroup({ items, active, durationMs, ...context }: ActivityGroupProps) {
     const [open, setOpen] = useState(false);
     const count = (type: ActivityItem["type"]) => items.filter((item) => item.type === type).length;
     const failed = items.filter(
@@ -170,6 +181,11 @@ const ActivityGroup = memo(
               {active ? "Codex is reasoning and using tools" : summary}
             </small>
           </span>
+          {!active && durationMs !== undefined && (
+            <span className="activity-duration" title="Total turn duration">
+              {formatDuration(durationMs)}
+            </span>
+          )}
           <ChevronRight className={`activity-chevron ${open ? "open" : ""}`} />
         </button>
         {open && (
@@ -194,6 +210,7 @@ const ActivityGroup = memo(
   },
   (before, after) =>
     before.active === after.active &&
+    before.durationMs === after.durationMs &&
     before.items.length === after.items.length &&
     before.items.every((item, index) => item === after.items[index]) &&
     before.workspace === after.workspace &&
@@ -477,6 +494,7 @@ export function Conversation({
       ),
     [items],
   );
+  const turnDurations = useMemo(() => getTurnDurations(items), [items]);
   const progress = useMemo(
     () => getTurnProgress({ items, running, queued, turnId: activeTurnId }),
     [items, running, queued, activeTurnId],
@@ -599,6 +617,7 @@ export function Conversation({
             <ActivityGroup
               items={segment.items}
               active={segment.id === activeActivityId}
+              durationMs={segment.turnId ? turnDurations.get(segment.turnId) : undefined}
               key={`${threadId}:${segment.id}`}
               workspace={workspace}
               sessionDirectory={sessionDirectory}
@@ -858,6 +877,22 @@ export function Conversation({
           </div>
         )}
       </div>
+      {!following && (
+        <button
+          type="button"
+          className="conversation-to-bottom"
+          aria-label="Scroll to latest message"
+          title="Scroll to bottom"
+          onClick={() => {
+            const element = scroll.current;
+            if (!element) return;
+            element.scrollTo({ top: element.scrollHeight, behavior: "instant" });
+            setFollowing(true);
+          }}
+        >
+          <ArrowDown />
+        </button>
+      )}
       {previewImage && (
         <div
           className="image-lightbox"
