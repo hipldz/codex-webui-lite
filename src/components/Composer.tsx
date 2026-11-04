@@ -218,9 +218,16 @@ export function Composer({
   const adding = useRef(false);
   const composing = useRef(false);
   const [addingFiles, setAddingFiles] = useState(false);
+  const [draggingFiles, setDraggingFiles] = useState(false);
+  const fileDragDepth = useRef(0);
+  const attachmentsDisabled = unavailable || running || addingFiles;
   const area = useRef<HTMLTextAreaElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const wrapper = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    fileDragDepth.current = 0;
+    setDraggingFiles(false);
+  }, [draftKey, attachmentsDisabled]);
   useLayoutEffect(() => {
     if (currentDraftKey.current === draftKey) return;
     const previousKey = currentDraftKey.current;
@@ -510,7 +517,38 @@ export function Composer({
             <ChevronDown aria-hidden="true" />
           </button>
         </div>
-        <div className="composer">
+        <div
+          className={`composer${draggingFiles && !attachmentsDisabled ? " is-dragging-files" : ""}`}
+          onDragEnter={(event) => {
+            if (!event.dataTransfer.types.includes("Files")) return;
+            event.preventDefault();
+            if (attachmentsDisabled) return;
+            fileDragDepth.current += 1;
+            setDraggingFiles(true);
+          }}
+          onDragOver={(event) => {
+            if (!event.dataTransfer.types.includes("Files")) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = attachmentsDisabled ? "none" : "copy";
+          }}
+          onDragLeave={() => {
+            fileDragDepth.current = Math.max(0, fileDragDepth.current - 1);
+            if (!fileDragDepth.current) setDraggingFiles(false);
+          }}
+          onDrop={(event) => {
+            if (!event.dataTransfer.types.includes("Files")) return;
+            event.preventDefault();
+            fileDragDepth.current = 0;
+            setDraggingFiles(false);
+            if (!attachmentsDisabled) void addFiles(Array.from(event.dataTransfer.files));
+          }}
+        >
+          {draggingFiles && !attachmentsDisabled && (
+            <div className="composer-drop-hint" role="status">
+              <Paperclip aria-hidden="true" />
+              Drop files to attach
+            </div>
+          )}
           {alternateCount > 0 && (
             <button
               type="button"
@@ -575,7 +613,7 @@ export function Composer({
           <textarea
             ref={area}
             value={text}
-            disabled={unavailable || running || addingFiles}
+            disabled={attachmentsDisabled}
             rows={1}
             placeholder={
               disabled
@@ -621,13 +659,13 @@ export function Composer({
                 className="attachment-input"
                 type="file"
                 multiple
-                disabled={unavailable || running || addingFiles}
+                disabled={attachmentsDisabled}
                 onChange={(event) => addFiles(event.target.files)}
               />
               <button
                 className="attach-button"
                 type="button"
-                disabled={unavailable || running || addingFiles}
+                disabled={attachmentsDisabled}
                 aria-label="Add attachment"
                 title="Attach files to this conversation"
                 onClick={() => input.current?.click()}

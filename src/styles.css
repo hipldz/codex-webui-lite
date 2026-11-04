@@ -1597,6 +1597,7 @@ svg {
   color: var(--blue);
 }
 .composer {
+  position: relative;
   width: min(100%, 790px);
   min-height: 111px;
   margin: 0 auto;
@@ -1615,6 +1616,29 @@ svg {
   box-shadow:
     0 22px 60px rgba(23, 23, 18, 0.12),
     0 2px 8px rgba(23, 23, 18, 0.04);
+}
+.composer.is-dragging-files {
+  border-color: var(--blue);
+  outline: 2px dashed var(--blue);
+  outline-offset: 3px;
+}
+.composer-drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: inherit;
+  background: var(--surface);
+  color: var(--blue);
+  font-size: 14px;
+  pointer-events: none;
+}
+.composer-drop-hint svg {
+  width: 20px;
+  height: 20px;
 }
 .composer-draft-switch {
   margin: 0 4px 8px;
