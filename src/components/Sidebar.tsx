@@ -17,13 +17,22 @@ import { threadIsRunning } from "../thread-status";
 import { CodexLogo } from "./CodexLogo";
 import { ThreadList } from "./ThreadList";
 
+const timeZone = "Asia/Shanghai";
+const calendarDate = new Intl.DateTimeFormat("en-CA", {
+  timeZone,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 function when(time: number) {
-  const days = Math.floor((Date.now() / 1000 - time) / 86400);
-  return days <= 0
-    ? "Today"
-    : days === 1
-      ? "Yesterday"
-      : new Date(time * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const now = Date.now();
+  const date = new Date(time * 1000);
+  const day = calendarDate.format(date);
+  if (day === calendarDate.format(now)) return "Today";
+  // Shanghai's previous calendar day is 24 hours before the current time.
+  if (day === calendarDate.format(now - 86_400_000)) return "Yesterday";
+  return date.toLocaleDateString(undefined, { timeZone, month: "short", day: "numeric" });
 }
 
 type Props = {
