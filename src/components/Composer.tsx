@@ -460,7 +460,7 @@ export function Composer({
       .filter((file): file is File => Boolean(file));
     if (!files.length) return;
     event.preventDefault();
-    void addFiles(files);
+    if (!attachmentsDisabled) void addFiles(files);
   };
   const workspacePath = workspace.replaceAll("\\", "/");
   const workspaceParts = workspacePath.split("/").filter(Boolean);
@@ -613,7 +613,7 @@ export function Composer({
           <textarea
             ref={area}
             value={text}
-            disabled={attachmentsDisabled}
+            disabled={unavailable || running}
             rows={1}
             placeholder={
               disabled

@@ -8,7 +8,9 @@ import {
   FilePlus2,
   Folder,
   FolderOpen,
+  Maximize2,
   MessageSquare,
+  Minimize2,
   PanelRight,
   Pencil,
   Save,
@@ -200,6 +202,7 @@ export function FileDrawer({
   onSaved?: (path: string, before: string, after: string) => void;
 }) {
   const [file, setFile] = useState<WorkspaceFile | null>(null);
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [fileError, setFileError] = useState("");
   const [query, setQuery] = useState("");
   const [directory, setDirectory] = useState("");
@@ -228,6 +231,19 @@ export function FileDrawer({
   const [searching, setSearching] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  useEffect(() => {
+    if (!file) setPreviewFullscreen(false);
+  }, [file]);
+  useEffect(() => {
+    if (!previewFullscreen) return;
+    const exitFullscreen = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      setPreviewFullscreen(false);
+    };
+    window.addEventListener("keydown", exitFullscreen);
+    return () => window.removeEventListener("keydown", exitFullscreen);
+  }, [previewFullscreen]);
   const dirty = editing && draft !== file?.content;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
@@ -467,7 +483,7 @@ export function FileDrawer({
       onMouseDown={(event) => event.target === event.currentTarget && requestClose()}
     >
       <section
-        className={`file-drawer scope-${scope} ${file || fileError || loadingPath ? "previewing" : ""}`}
+        className={`file-drawer scope-${scope} ${file || fileError || loadingPath ? "previewing" : ""}${previewFullscreen ? " preview-fullscreen" : ""}`}
       >
         <header>
           <button
@@ -734,6 +750,20 @@ export function FileDrawer({
                     {file.path}
                   </span>
                   <div className="preview-actions">
+                    <button
+                      type="button"
+                      aria-label={
+                        previewFullscreen ? "Exit full screen preview" : "Full screen preview"
+                      }
+                      aria-pressed={previewFullscreen}
+                      title={
+                        previewFullscreen ? "Exit full screen preview (Esc)" : "Full screen preview"
+                      }
+                      onClick={() => setPreviewFullscreen((value) => !value)}
+                    >
+                      {previewFullscreen ? <Minimize2 /> : <Maximize2 />}
+                      <span>{previewFullscreen ? "Exit full screen" : "Full screen"}</span>
+                    </button>
                     <a
                       className="download-file"
                       href={`${basePath === "/" ? "" : basePath}/api/files/download?path=${encodeURIComponent(file.path)}${fileScope}`}

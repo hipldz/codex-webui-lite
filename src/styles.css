@@ -2701,10 +2701,22 @@ svg {
 }
 .preview-pane {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: #fff;
+}
+.file-drawer.preview-fullscreen {
+  width: 100%;
+}
+.file-drawer.preview-fullscreen > header,
+.file-drawer.preview-fullscreen > .file-scope-switch,
+.file-drawer.preview-fullscreen .tree-pane {
+  display: none;
+}
+.file-drawer.preview-fullscreen .files-body {
+  grid-template-columns: minmax(0, 1fr);
 }
 .file-open-overlay {
   position: absolute;
