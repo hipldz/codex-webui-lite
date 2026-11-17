@@ -1,4 +1,16 @@
-import type { Thread } from "./types";
+import type { PendingInteraction, Thread } from "./types";
+import { agentParentId } from "../server/codex/agent-info";
+
+export function sidebarThreads(
+  threads: Thread[],
+  activeId?: string,
+  interactions: PendingInteraction[] = [],
+): Thread[] {
+  const waiting = new Set(interactions.map((entry) => entry.threadId));
+  return threads.filter(
+    (thread) => !agentParentId(thread) || thread.id === activeId || waiting.has(thread.id),
+  );
+}
 
 export const mergeThreadSummary = (
   previous: Thread | null | undefined,

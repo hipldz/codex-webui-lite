@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Bell,
+  Bot,
   FolderOpen,
   GitCompareArrows,
   Menu,
@@ -12,6 +13,7 @@ import { Composer, type ComposerAttachment, type PermissionPreset } from "./comp
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { Conversation } from "./components/Conversation";
 import { DiffDrawer } from "./components/DiffDrawer";
+import { AgentsDrawer } from "./components/AgentsDrawer";
 import { FileDrawer } from "./components/FileDrawer";
 import { Sidebar } from "./components/Sidebar";
 import {
@@ -27,7 +29,7 @@ import { useMobileViewport } from "./hooks/useMobileViewport";
 import { useSidebarResize } from "./hooks/useSidebarResize";
 import { useTaskNotifications } from "./hooks/useTaskNotifications";
 import { useTheme } from "./hooks/useTheme";
-import { mergeThreadList, mergeThreadSummary } from "./thread-list";
+import { mergeThreadList, mergeThreadSummary, sidebarThreads } from "./thread-list";
 import { getBranchableResponseIds, threadIsRunning } from "./thread-status";
 import { readOutgoing, writeOutgoing, type OutgoingSubmission } from "./outgoing-store";
 import type {
@@ -344,6 +346,8 @@ export function App() {
   const [fileTarget, setFileTarget] = useState(initialFile);
   const [settings, setSettings] = useState(false);
   const [changes, setChanges] = useState(false);
+  const [agentsThread, setAgentsThread] = useState("");
+  useEffect(() => setAgentsThread(""), [active?.id]);
   const [workspacePicker, setWorkspacePicker] = useState(false);
   const [workspaceSelecting, setWorkspaceSelecting] = useState(false);
   const workspaceSelectingRef = useRef(false);
@@ -2059,8 +2063,8 @@ export function App() {
   };
 
   const sidebarProps = {
-    threads,
-    archivedThreads,
+    threads: sidebarThreads(threads, active?.id, pendingInteractions),
+    archivedThreads: sidebarThreads(archivedThreads, active?.id, pendingInteractions),
     active: active?.id,
     select,
     create,
@@ -2364,6 +2368,19 @@ export function App() {
             </div>
           </div>
           <div className="header-actions">
+            {active && (
+              <button
+                className="header-button"
+                aria-label="Agents"
+                disabled={
+                  !demo && (!connected || meta.codexStatus !== "ready" || Boolean(sessionLoading))
+                }
+                onClick={() => setAgentsThread(active.id)}
+              >
+                <Bot />
+                <span>Agents</span>
+              </button>
+            )}
             {diff && (
               <button
                 className="header-button changes-button"
@@ -2604,6 +2621,15 @@ export function App() {
         />
       )}
       {changes && <DiffDrawer diff={diff} close={() => setChanges(false)} />}
+      {active && agentsThread === active.id && !currentApproval && !workspacePicker && (
+        <AgentsDrawer
+          key={active.id}
+          threadId={active.id}
+          basePath={meta.basePath}
+          close={() => setAgentsThread("")}
+          demo={demo}
+        />
+      )}
       {currentApproval && !workspacePicker && (
         <ApprovalDialog
           key={`${active?.id}:${currentApproval.id}`}

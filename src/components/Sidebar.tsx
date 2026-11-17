@@ -303,11 +303,6 @@ export function Sidebar({
                 )}
               </div>
             ))}
-            {(view === "recent" ? moreRecent : moreArchived) && !query && (
-              <button className="load-more-threads" onClick={() => loadMore?.(view)}>
-                Load more
-              </button>
-            )}
           </>
         ) : (
           <div className="thread-empty">
@@ -317,6 +312,11 @@ export function Sidebar({
                 ? "No archived threads"
                 : "No recent threads"}
           </div>
+        )}
+        {(view === "recent" ? moreRecent : moreArchived) && !query && (
+          <button className="load-more-threads" onClick={() => loadMore?.(view)}>
+            Load more
+          </button>
         )}
       </ThreadList>
     </aside>

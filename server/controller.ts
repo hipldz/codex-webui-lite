@@ -17,6 +17,7 @@ import type { EventHub } from "./event-hub.js";
 import { HistoryReader, type HistoryEntry } from "./history.js";
 import { TurnQueue } from "./turn-queue.js";
 import { processTreeMemory } from "./resources.js";
+import { listAgents, readAgentResult } from "./agents.js";
 import type { PermissionPreset, WebUiSettings } from "./settings.js";
 
 const sourceKinds = [
@@ -184,6 +185,7 @@ export class CodexController {
   private resourceRequest?: Promise<any>;
   private lifecycle?: Promise<any[]>;
   private historyRequests = 0;
+  private agentRequests = 0;
   private historyTail: Promise<unknown> = Promise.resolve();
   private fileRequests = 0;
   private fileAncestors = new Map<string, string[]>();
@@ -1162,6 +1164,17 @@ export class CodexController {
       } finally {
         this.historyRequests--;
       }
+    } else if (["thread.agents", "thread.agentResult"].includes(msg.type)) {
+      if (this.agentRequests >= 2)
+        messages = [{ type: "error", message: "Agent inspection is busy; retry shortly" }];
+      else {
+        this.agentRequests++;
+        try {
+          messages = await this.handleAction(msg);
+        } finally {
+          this.agentRequests--;
+        }
+      }
     } else if (["fs.read", "fs.write", "fs.upload"].includes(msg.type)) {
       if (this.fileRequests >= 2)
         messages = [
@@ -1210,6 +1223,25 @@ export class CodexController {
 
   private async handleAction(msg: any): Promise<any[]> {
     try {
+      if (msg.type === "thread.agents" || msg.type === "thread.agentResult") {
+        if (typeof msg.threadId !== "string" || !msg.threadId)
+          throw new Error("Choose a session first");
+        if (msg.type === "thread.agents")
+          return [
+            {
+              type: "agents.list",
+              ...(await listAgents(this.codex, msg.threadId, [...this.threadSummaries.values()])),
+            },
+          ];
+        if (typeof msg.agentId !== "string" || !msg.agentId)
+          throw new Error("Choose an agent first");
+        return [
+          {
+            type: "agents.result",
+            ...(await readAgentResult(this.codex, msg.threadId, msg.agentId)),
+          },
+        ];
+      }
       if (msg.type === "turn.status") {
         const state = await this.reconcileThread(String(msg.threadId || ""));
         if (state.stale) return [state];

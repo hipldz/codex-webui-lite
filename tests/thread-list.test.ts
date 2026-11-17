@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeThreadList } from "../src/thread-list";
+import { mergeThreadList, sidebarThreads } from "../src/thread-list";
 import type { Thread } from "../src/types";
 
 const thread = (id: string, updates: Partial<Thread> = {}): Thread => ({
@@ -92,4 +92,38 @@ test("initial replacement follows server order and removes unrelated cached entr
   assert.deepEqual(ids(result), ["new", "saved"]);
   assert.equal(result[1].name, "Saved title");
   assert.equal(result[1].preview, "Preview saved");
+});
+
+test("agent threads stay out of the sidebar while ordinary forks and unknown sources remain", () => {
+  const sessions = [
+    thread("parent"),
+    thread("fork", { forkedFromId: "parent" }),
+    thread("agent", { parentThreadId: "parent" }),
+    thread("legacy-agent", {
+      source: { subAgent: { thread_spawn: { parent_thread_id: "parent" } } },
+    }),
+    thread("unknown", { source: "unknown" }),
+  ];
+  assert.deepEqual(ids(sidebarThreads(sessions)), ["parent", "fork", "unknown"]);
+  assert.deepEqual(ids(sidebarThreads(mergeThreadList([], sessions, "replace"))), [
+    "parent",
+    "fork",
+    "unknown",
+  ]);
+});
+
+test("a child with pending input or an explicitly opened child remains accessible", () => {
+  const sessions = [
+    thread("parent"),
+    thread("waiting", { parentThreadId: "parent" }),
+    thread("opened", { parentThreadId: "parent" }),
+  ];
+  assert.deepEqual(
+    ids(
+      sidebarThreads(sessions, "opened", [
+        { threadId: "waiting", id: "approval", type: "approval" },
+      ]),
+    ),
+    ["parent", "waiting", "opened"],
+  );
 });

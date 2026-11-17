@@ -93,6 +93,8 @@ export type Thread = {
   createdAt?: number;
   updatedAt: number;
   forkedFromId?: string | null;
+  parentThreadId?: string | null;
+  source?: unknown;
   status?: { type?: string; activeFlags?: string[] } | string;
 };
 export type FileEntry = { name: string; path: string; type: "directory" | "file" };
