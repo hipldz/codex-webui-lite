@@ -28,6 +28,8 @@ Codex 的网页界面，支持管理本机会话、执行任务和查看项目�
 - 已安装 `codex` CLI，并完成登录或配置好认证方式。
 - 运行 Web UI 的用户能够执行 `codex`，并有权访问目标 workspace。
 
+**Windows 推荐统一使用 CMD + BAT**：在命令提示符（`cmd.exe`）中执行安装、配置和启动命令，启动脚本使用 `.bat`，不要使用 PowerShell 作为启动终端。VS Code 集成终端也请选择 **Command Prompt**。通过 BAT 映射 VS Code 扩展内的 Codex exe 时，同样使用这套方式，见下方说明。
+
 ```bash
 node --version
 codex --version
@@ -42,11 +44,51 @@ npm run build
 npm start
 ```
 
+Windows 在 **CMD** 中执行：
+
+```bat
+cd /d C:\path\to\codex-webui-lite
+npm install
+npm run build
+npm start
+```
+
 打开 <http://127.0.0.1:8765/>，选择 workspace 后发送任务。也可在启动前设置 `CODEX_WEB_DEFAULT_WORKSPACE`，见[默认工作目录](#默认工作目录)。
 
 构建生成前端 `dist/` 和服务端 `dist-server/`。`npm start` 只启动已有构建；修改源码后需重新构建并重启。
 
 默认仅监听本机地址，未启用访问认证。远程访问需配置[认证](#访问认证)和 [HTTPS 反向代理](#nginx-反向代理)。
+
+### Windows：CMD 与 Codex BAT 映射
+
+Windows 后端通过 `cmd.exe /d /s /c codex app-server --stdio` 启动 Codex，因此应在 **CMD** 中检查命令是否可用；仅在 PowerShell 中配置的 alias、function 或 `.ps1` 包装不会被这条启动命令使用。
+
+```bat
+where codex
+codex --version
+```
+
+通过 npm 安装时生成的 `codex.cmd` 可以直接使用。如果使用的是 **VS Code 扩展内的 `codex.exe`**，推荐创建 `codex.bat` 来映射，不要只设置 PowerShell 别名。将以下内容保存为例如 `C:\tools\codex\codex.bat`，把 exe 路径替换为本机实际位置：
+
+```bat
+@echo off
+"C:\path\to\codex.exe" %*
+exit /b %errorlevel%
+```
+
+`%*` 必须保留，用于转发 `app-server --stdio` 等参数；不要在 BAT 中额外输出提示或使用 `pause`，以免干扰 stdio 协议。VS Code 扩展升级后，若 exe 位置变化，需更新 BAT 中的路径。
+
+在启动 Web UI 的同一个 **CMD** 窗口中，将 BAT 所在目录加入 `PATH`，确认 `where codex` 的首个结果为预期的包装脚本，再启动：
+
+```bat
+set "PATH=C:\tools\codex;%PATH%"
+where codex
+codex --version
+cd /d C:\path\to\codex-webui-lite
+npm start
+```
+
+也可将环境变量和启动命令保存为自己的 `.bat`；在 BAT 中调用 `npm` 命令时使用 `call npm start`（安装、构建分别使用 `call npm install`、`call npm run build`）。项目不会自动加载 `.env.bat`，需在同一个 CMD 窗口中先执行 `call .env.bat`，再启动服务。
 
 ## 使用说明
 
@@ -208,7 +250,7 @@ Project / Session 文件接口绑定会话或服务端签发的 workspace 选择
 
 ### 配置生效
 
-项目不会自动加载 `.env`。shell 在启动前 `export`，PowerShell 设置 `$env:变量名`，systemd 使用 `EnvironmentFile`。后台脚本继承当前终端环境，不保存上次配置；在另一个终端重启时需重新设置全部所需变量。
+项目不会自动加载 `.env`。Linux / macOS 在启动前 `export`，Windows 推荐在 **CMD** 中使用 `set "变量名=值"`，systemd 使用 `EnvironmentFile`。若将 Windows 配置保存为 `.env.bat`，需先在同一个 CMD 窗口执行 `call .env.bat`。后台脚本继承当前终端环境，不保存上次配置；在另一个终端重启时需重新设置全部所需变量。
 
 环境变量修改后，重启 **Web 服务进程**；页面中的 Codex Restart 只重启 app-server。仅改环境变量无需构建，改源码则先构建再重启生产服务。
 
@@ -227,10 +269,10 @@ export CODEX_WEB_DEFAULT_WORKSPACE=/absolute/path/to/project
 npm start
 ```
 
-PowerShell：
+Windows CMD：
 
-```powershell
-$env:CODEX_WEB_DEFAULT_WORKSPACE = "C:\path\to\project"
+```bat
+set "CODEX_WEB_DEFAULT_WORKSPACE=C:\path\to\project"
 npm start
 ```
 
@@ -253,8 +295,8 @@ export CODEX_WEB_MAX_TURNS=2
 npm start
 ```
 
-```powershell
-$env:CODEX_WEB_MAX_TURNS = "2"
+```bat
+set "CODEX_WEB_MAX_TURNS=2"
 npm start
 ```
 
@@ -405,20 +447,14 @@ Linux / macOS：
 ./scripts/codex-web.sh stop
 ```
 
-PowerShell：
+Windows：仍推荐从 **CMD** 启动。现有后台管理脚本为 `.ps1`，在 CMD 中通过以下命令调用；环境变量和 Codex BAT 映射仍在当前 CMD 窗口中配置。
 
-```powershell
-.\scripts\codex-web.ps1 start
-.\scripts\codex-web.ps1 status
-.\scripts\codex-web.ps1 logs
-.\scripts\codex-web.ps1 restart
-.\scripts\codex-web.ps1 stop
-```
-
-Windows 执行策略阻止脚本时，可仅对本次命令放行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\codex-web.ps1 start
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-web.ps1 start
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-web.ps1 status
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-web.ps1 logs
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-web.ps1 restart
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-web.ps1 stop
 ```
 
 脚本读取执行 `start` / `restart` 时的环境变量，不保存配置，也不加载 `.env`。例如：
@@ -432,13 +468,13 @@ export CODEX_WEB_DEFAULT_WORKSPACE="$HOME/workspace"
 ./scripts/codex-web.sh start
 ```
 
-```powershell
-$env:CODEX_WEB_BASE_PATH = "/codex"
-$env:CODEX_WEB_PORT = "8765"
-$env:CODEX_WEB_MAX_TURNS = "1"
-New-Item -ItemType Directory -Force -Path "$HOME/workspace" | Out-Null
-$env:CODEX_WEB_DEFAULT_WORKSPACE = "$HOME/workspace"
-.\scripts\codex-web.ps1 start
+```bat
+set "CODEX_WEB_BASE_PATH=/codex"
+set "CODEX_WEB_PORT=8765"
+set "CODEX_WEB_MAX_TURNS=1"
+if not exist "%USERPROFILE%\workspace" mkdir "%USERPROFILE%\workspace"
+set "CODEX_WEB_DEFAULT_WORKSPACE=%USERPROFILE%\workspace"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-web.ps1 start
 ```
 
 换终端重启时需重新设置全部所需变量；已运行时再次 `start` 不更新配置。日志和 PID 保存在 `.run/`，不会提交到 Git；Linux 日志为 `codex-web.log`，Windows 为 `codex-web.out.log` 和 `codex-web.error.log`。查看日志时按 `Ctrl+C` 只退出日志查看。
@@ -520,9 +556,9 @@ export CODEX_WEB_AUTH='username:password'
 ./scripts/codex-web.sh restart
 ```
 
-```powershell
-$env:CODEX_WEB_AUTH = "username:password"
-.\scripts\codex-web.ps1 restart
+```bat
+set "CODEX_WEB_AUTH=username:password"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-web.ps1 restart
 ```
 
 不设置或删除变量并重启可关闭认证：

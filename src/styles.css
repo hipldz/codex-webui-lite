@@ -2050,8 +2050,10 @@ svg {
   left: 0;
   width: 280px;
   max-width: calc(100vw - 28px);
-  max-height: min(470px, 62vh);
-  overflow: auto;
+  max-height: min(470px, var(--picker-available-height, 62dvh));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 7px;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
@@ -2067,6 +2069,7 @@ svg {
 }
 .composer-picker-title {
   min-height: 29px;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -2082,9 +2085,15 @@ svg {
 }
 .composer-picker-note {
   display: block;
+  flex: none;
   padding: 2px 8px 8px;
   color: var(--muted);
   font-size: 10px;
+}
+.composer-picker-menu [role="listbox"] {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .composer-picker-menu [role="option"] {
   width: 100%;
@@ -5483,11 +5492,6 @@ a:focus-visible {
     left: 0;
     width: auto;
     max-width: none;
-    max-height: min(
-      470px,
-      max(100px, calc(var(--viewport-height, 100dvh) - var(--composer-height, 180px) - 60px))
-    );
-    overflow-y: auto;
   }
   .search-threads,
   .search {

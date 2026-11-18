@@ -3,6 +3,16 @@ import { Check, ChevronDown, type LucideIcon } from "lucide-react";
 
 type PickerOption = { value: string; label: string; description?: string };
 
+function scrollOptionIntoView(option?: HTMLButtonElement | null) {
+  const list = option?.closest<HTMLElement>('[role="listbox"]');
+  if (!option || !list) return;
+  const optionBounds = option.getBoundingClientRect();
+  const listBounds = list.getBoundingClientRect();
+  if (optionBounds.top < listBounds.top) list.scrollTop -= listBounds.top - optionBounds.top;
+  else if (optionBounds.bottom > listBounds.bottom)
+    list.scrollTop += optionBounds.bottom - listBounds.bottom;
+}
+
 export function ComposerPicker({
   kind,
   label,
@@ -29,6 +39,7 @@ export function ComposerPicker({
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const selected = options.find((option) => option.value === value);
   const activeLabel = selected?.label || value || placeholder || label;
@@ -47,11 +58,37 @@ export function ComposerPicker({
   }, [open]);
   useLayoutEffect(() => {
     if (!open) return;
+    const element = menu.current;
+    if (!element) return;
+    const viewport = window.visualViewport;
+    const container = element.closest(".chat-main");
+    const updateHeight = () => {
+      const top = Math.max(viewport?.offsetTop || 0, container?.getBoundingClientRect().top || 0);
+      const available = element.getBoundingClientRect().bottom - top - 12;
+      element.style.setProperty("--picker-available-height", `${Math.max(0, available)}px`);
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(element);
+    observer.observe(root.current?.closest(".composer-wrap") || element);
+    if (container) observer.observe(container);
+    window.addEventListener("resize", updateHeight);
+    viewport?.addEventListener("resize", updateHeight);
+    viewport?.addEventListener("scroll", updateHeight);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateHeight);
+      viewport?.removeEventListener("resize", updateHeight);
+      viewport?.removeEventListener("scroll", updateHeight);
+    };
+  }, [open]);
+  useLayoutEffect(() => {
+    if (!open) return;
     const option =
       root.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]') ||
       root.current?.querySelector<HTMLButtonElement>('[role="option"]');
     option?.focus({ preventScroll: true });
-    option?.scrollIntoView({ block: "nearest" });
+    scrollOptionIntoView(option);
   }, [open]);
 
   const closeMenu = () => {
@@ -90,7 +127,7 @@ export function ComposerPicker({
               ? buttons.length - 1
               : (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
         buttons[next]?.focus({ preventScroll: true });
-        buttons[next]?.scrollIntoView({ block: "nearest" });
+        scrollOptionIntoView(buttons[next]);
       }}
     >
       <button
@@ -110,7 +147,7 @@ export function ComposerPicker({
         <ChevronDown className="trigger-chevron" aria-hidden="true" />
       </button>
       {open && (
-        <div className={`composer-picker-menu ${kind}-menu`}>
+        <div className={`composer-picker-menu ${kind}-menu`} ref={menu}>
           <div className="composer-picker-title">
             <Icon aria-hidden="true" />
             {label}

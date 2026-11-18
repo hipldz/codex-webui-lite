@@ -7,5 +7,5 @@ artifacts/
 .DS_Store
 *.log
 .env
-.env.ps1
+.env.*
 
